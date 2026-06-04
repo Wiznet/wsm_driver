@@ -1,15 +1,15 @@
 
 # TCP Server Example
 
-This example initializes the SPI port layer, configures W5500 through ioLibrary, and runs a TCP server loopback using a non-blocking socket and direct RX buffer access (wiz_recv_data).
+This example initializes the SPI port layer, configures W5500 through ioLibrary, and runs a TCP server loopback.
 
 **Key points:**
-- The socket is opened in non-blocking mode (SF_IO_NONBLOCK) to avoid WDT during accept/connect.
-- Data reception does not use the standard recv() API, but instead reads directly from the RX buffer using wiz_recv_data and setSn_CR(Sn_CR_RECV).
-- This approach avoids the ioLibrary's non-blocking recv() busy loop issue and prevents WDT resets.
+- The server uses ioLibrary's `recv()`/`send()` loopback flow (`loopback_tcps`).
+- The listening socket is opened in TCP mode with default flags (`socket(..., Sn_MR_TCP, ..., 0x00)`).
+- Task WDT is disabled in `app_main()` using `esp_task_wdt_delete(NULL)` and `esp_task_wdt_deinit()`.
 
 **Note:**
-- The application is responsible for checking socket state and RX buffer size before reading.
+- The application checks PHY link state before running the loopback state machine.
 
 ## Configuration
 
@@ -38,7 +38,7 @@ Configure the WIZnet chip, SPI host number, clock, pins, and socket buffer size 
 | INT | 14 |
 
 ### Network Configuration
-Configure the network settings in the `example/tcp_server/main/main.c file`.
+Configure the network settings in the `examples/tcp_server/main/main.c` file.
 ```bash
 static const uint16_t EXAMPLE_LISTEN_PORT = 5000;
 ```
@@ -78,7 +78,6 @@ Link
 [link-config_main]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_main.png
 [link-config_component]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_component.png
 [link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/config_wiz_toe.png
-[link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/build_log.png
 
 [link-build_log]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/build_log.png
 [link-run_tcp_server_open]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tcp_server/run_tcp_server_open.png

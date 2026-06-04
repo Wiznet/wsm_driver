@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_wiz_toe.h"
 #include "esp_wiz_toe/Ethernet/socket.h"
 #include "freertos/FreeRTOS.h"
@@ -38,54 +39,6 @@ static bool s_link_up = false;
 static bool s_link_was_up = false;
 static uint16_t s_any_port = 50000;
 
-static int32_t do_retransmit(uint8_t sn, uint8_t *buf, uint16_t buf_size)
-{
-    // State check
-    uint8_t state = getSn_SR(sn);
-    if (state != SOCK_ESTABLISHED && state != SOCK_CLOSE_WAIT) {
-        return 1;
-    }
-
-    uint16_t rx_size = getSn_RX_RSR(sn);
-    if (rx_size == 0) {
-        return 1;
-    }
-    if (rx_size > buf_size) {
-        rx_size = buf_size;
-    }
-
-    // Read directly from RX buffer
-    wiz_recv_data(sn, buf, rx_size);
-    setSn_CR(sn, Sn_CR_RECV);
-    // Wait for command to complete (avoid WDT)
-    while (getSn_CR(sn)) {
-        vTaskDelay(1);
-    }
-
-    // Send loop (keep existing send logic)
-    uint16_t sent = 0;
-    uint32_t send_busy_count = 0;
-    while (sent < rx_size) {
-        int32_t sret = send(sn, buf + sent, rx_size - sent);
-        if (sret == SOCK_BUSY) {
-            send_busy_count++;
-            if ((send_busy_count % 100U) == 0U) {
-                ESP_LOGW(TAG, "send busy progress=%u/%u", (unsigned)sent, (unsigned)rx_size);
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-            continue;
-        }
-        if (sret < 0) {
-            ESP_LOGW(TAG, "send failed ret=%ld progress=%u/%u", (long)sret, (unsigned)sent, (unsigned)rx_size);
-            (void)close(sn);
-            return sret;
-        }
-        sent += (uint16_t)sret;
-    }
-
-    return 1;
-}
-
 static const wiz_NetInfo s_net_info = {
     .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
     .ip = {192, 168, 11, 2},
@@ -110,9 +63,90 @@ static void fill_spi_config(esp_wiz_toe_spi_config_t *cfg)
     cfg->lock_timeout_ms = EXAMPLE_IO_TIMEOUT_MS;
 }
 
+int32_t loopback_tcpc(uint8_t sn, uint8_t* buf, uint8_t* destip, uint16_t destport) {
+    int32_t ret; // return value for SOCK_ERRORs
+    uint16_t size = 0, sentsize = 0;
+
+    // Destination (TCP Server) IP info (will be connected)
+    // >> loopback_tcpc() function parameter
+    // >> Ex)
+    //	uint8_t destip[4] = 	{192, 168, 0, 214};
+    //	uint16_t destport = 	5000;
+
+    // Port number for TCP client (will be increased)
+    static uint16_t any_port = 	50000;
+
+    // Socket Status Transitions
+    // Check the W5500 Socket n status register (Sn_SR, The 'Sn_SR' controlled by Sn_CR command or Packet send/recv status)
+    switch (getSn_SR(sn)) {
+    case SOCK_ESTABLISHED :
+        if (getSn_IR(sn) & Sn_IR_CON) {	// Socket n interrupt register mask; TCP CON interrupt = connection with peer is successful
+            ESP_LOGI(TAG, "%d:Connected to - %d.%d.%d.%d : %d\r\n", sn, destip[0], destip[1], destip[2], destip[3], destport);
+            setSn_IR(sn, Sn_IR_CON);  // this interrupt should be write the bit cleared to '1'
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////////////
+        // Data Transaction Parts; Handle the [data receive and send] process
+        //////////////////////////////////////////////////////////////////////////////////////////////
+        if ((size = getSn_RX_RSR(sn)) > 0) { // Sn_RX_RSR: Socket n Received Size Register, Receiving data length
+            if (size > EXAMPLE_LOOPBACK_BUF_SIZE) {
+                size = EXAMPLE_LOOPBACK_BUF_SIZE;
+            }
+            ret = recv(sn, buf, size); // Data Receive process (H/W Rx socket buffer -> User's buffer)
+
+            if (ret <= 0) {
+                return ret;
+            }
+            size = (uint16_t) ret;
+            sentsize = 0;
+
+            // Data sentsize control
+            while (size != sentsize) {
+                ret = send(sn, buf + sentsize, size - sentsize); // Data send process (User's buffer -> Destination through H/W Tx socket buffer)
+                if (ret < 0) { // Send Error occurred (sent data length < 0)
+                    close(sn); // socket close
+                    return ret;
+                }
+                sentsize += ret; // Don't care SOCKERR_BUSY, because it is zero.
+            }
+        }
+        //////////////////////////////////////////////////////////////////////////////////////////////
+        break;
+
+    case SOCK_CLOSE_WAIT :
+        if ((ret = disconnect(sn)) != SOCK_OK) {
+            return ret;
+        }
+        ESP_LOGI(TAG, "%d:Socket Closed\r\n", sn);
+        break;
+
+    case SOCK_INIT :
+        ESP_LOGI(TAG, "%d:Try to connect to the %d.%d.%d.%d : %d\r\n", sn, destip[0], destip[1], destip[2], destip[3], destport);
+        if ((ret = connect(sn, destip, destport)) != SOCK_OK) {
+            return ret;    //	Try to TCP connect to the TCP server (destination)
+        }
+        break;
+
+    case SOCK_CLOSED:
+        close(sn);
+        if ((ret = socket(sn, Sn_MR_TCP, any_port++, 0)  != sn)) {    
+            if (any_port == 0xffff) {
+                any_port = 50000;
+            }
+            return ret; // TCP socket open with 'any_port' port number
+        }
+        break;
+    default:
+        break;
+    }
+    return 1;
+}
+
+
 static void tcp_client_task(void *arg)
 {
     (void)arg;
+    int32_t retval = 0;
     int32_t rc = 0;
     uint32_t connect_busy_count = 0;
 
@@ -182,81 +216,25 @@ static void tcp_client_task(void *arg)
             s_link_was_up = true;
         }
 
-
-        switch (getSn_SR(EXAMPLE_SOCKET_NUM)) {
-        case SOCK_ESTABLISHED:
-            connect_busy_count = 0;
-            if (getSn_IR(EXAMPLE_SOCKET_NUM) & Sn_IR_CON) {
-                setSn_IR(EXAMPLE_SOCKET_NUM, Sn_IR_CON);
-                ESP_LOGI(TAG, "Connected to %u.%u.%u.%u:%u",
-                         EXAMPLE_SERVER_IP[0], EXAMPLE_SERVER_IP[1], EXAMPLE_SERVER_IP[2], EXAMPLE_SERVER_IP[3],
-                         (unsigned)EXAMPLE_SERVER_PORT);
+        while(1)
+        {
+            if ((retval = loopback_tcpc(EXAMPLE_SOCKET_NUM, s_loopback_buf, (uint8_t *)EXAMPLE_SERVER_IP, EXAMPLE_SERVER_PORT)) < 0) {
+                ESP_LOGI(TAG, " loopback_tcpc error : %d\n", retval);
+                while (1){vTaskDelay(pdMS_TO_TICKS(10));}
             }
-            // 논블로킹 모드에서 RX 버퍼에 데이터가 있을 때만 do_retransmit 호출
-            if (getSn_RX_RSR(EXAMPLE_SOCKET_NUM) > 0) {
-                rc = do_retransmit(EXAMPLE_SOCKET_NUM, s_loopback_buf, EXAMPLE_LOOPBACK_BUF_SIZE);
-            }
-            break;
-
-        case SOCK_CLOSE_WAIT:
-            // 논블로킹 모드에서 RX 버퍼에 데이터가 있을 때만 do_retransmit 호출
-            if (getSn_RX_RSR(EXAMPLE_SOCKET_NUM) > 0) {
-                rc = do_retransmit(EXAMPLE_SOCKET_NUM, s_loopback_buf, EXAMPLE_LOOPBACK_BUF_SIZE);
-            }
-            if (rc >= 0) {
-                rc = disconnect(EXAMPLE_SOCKET_NUM);
-                if (rc == SOCK_OK) {
-                    ESP_LOGI(TAG, "Socket disconnected");
-                    rc = 1;
-                }
-            }
-            break;
-
-        case SOCK_INIT:
-            rc = connect(EXAMPLE_SOCKET_NUM, (uint8_t *)EXAMPLE_SERVER_IP, EXAMPLE_SERVER_PORT);
-            if (rc == SOCK_BUSY) {
-                connect_busy_count++;
-                if ((connect_busy_count % 200U) == 0U) {
-                    ESP_LOGI(TAG, "Connecting to %u.%u.%u.%u:%u...",
-                             EXAMPLE_SERVER_IP[0], EXAMPLE_SERVER_IP[1], EXAMPLE_SERVER_IP[2], EXAMPLE_SERVER_IP[3],
-                             (unsigned)EXAMPLE_SERVER_PORT);
-                }
-                rc = 1;
-            } else {
-                connect_busy_count = 0;
-            }
-            break;
-
-        case SOCK_CLOSED:
-            connect_busy_count = 0;
-            (void)close(EXAMPLE_SOCKET_NUM);
-            // Open socket in non-blocking mode (SF_IO_NONBLOCK)
-            rc = socket(EXAMPLE_SOCKET_NUM, Sn_MR_TCP, s_any_port++, SF_IO_NONBLOCK);
-            if (rc == EXAMPLE_SOCKET_NUM) {
-                ESP_LOGI(TAG, "Client socket opened (non-blocking)");
-                rc = 1;
-            }
-            if (s_any_port == 0xFFFFU) {
-                s_any_port = 50000;
-            }
-            break;
-
-        default:
-            rc = 1;
-            break;
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
-
-        if (rc < 0) {
-            ESP_LOGW(TAG, "tcp_client_task step failed: %ld", (long)rc);
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
-
 void app_main(void)
 {
+    // loopback_tcpc opens the socket in blocking mode (socket flag 0), so this
+    // demo can stay in long waits/retries; disable Task WDT to avoid resets
+    // during bring-up and manual network testing.
+    esp_task_wdt_delete(NULL);
+    esp_task_wdt_deinit();
+
     xTaskCreate(tcp_client_task, "tcp_client_task", 8192, NULL, 5, NULL);
 }

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_wiz_toe.h"
 #include "esp_wiz_toe/Ethernet/socket.h"
 #include "freertos/FreeRTOS.h"
@@ -36,54 +37,6 @@ static uint8_t s_loopback_buf[EXAMPLE_LOOPBACK_BUF_SIZE];
 static bool s_link_up = false;
 static bool s_link_was_up = false;
 
-static int32_t do_retransmit(uint8_t sn, uint8_t *buf, uint16_t buf_size)
-{
-    // State check
-    uint8_t state = getSn_SR(sn);
-    if (state != SOCK_ESTABLISHED && state != SOCK_CLOSE_WAIT) {
-        return 1;
-    }
-
-    uint16_t rx_size = getSn_RX_RSR(sn);
-    if (rx_size == 0) {
-        return 1;
-    }
-    if (rx_size > buf_size) {
-        rx_size = buf_size;
-    }
-
-    // Read directly from RX buffer
-    wiz_recv_data(sn, buf, rx_size);
-    setSn_CR(sn, Sn_CR_RECV);
-    // Wait for command to complete (avoid WDT)
-    while (getSn_CR(sn)) {
-        vTaskDelay(1);
-    }
-
-    // Send loop (keep existing send logic)
-    uint16_t sent = 0;
-    uint32_t send_busy_count = 0;
-    while (sent < rx_size) {
-        int32_t sret = send(sn, buf + sent, rx_size - sent);
-        if (sret == SOCK_BUSY) {
-            send_busy_count++;
-            if ((send_busy_count % 100U) == 0U) {
-                ESP_LOGW(TAG, "send busy progress=%u/%u", (unsigned)sent, (unsigned)rx_size);
-            }
-            vTaskDelay(pdMS_TO_TICKS(1));
-            continue;
-        }
-        if (sret < 0) {
-            ESP_LOGW(TAG, "send failed ret=%ld progress=%u/%u", (long)sret, (unsigned)sent, (unsigned)rx_size);
-            (void)close(sn);
-            return sret;
-        }
-        sent += (uint16_t)sret;
-    }
-
-    return 1;
-}
-
 static const wiz_NetInfo s_net_info = {
     .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56},
     .ip = {192, 168, 11, 2},
@@ -108,9 +61,71 @@ static void fill_spi_config(esp_wiz_toe_spi_config_t *cfg)
     cfg->lock_timeout_ms = EXAMPLE_ACCEPT_TIMEOUT_MS;
 }
 
+int32_t loopback_tcps(uint8_t sn, uint8_t* buf, uint16_t port) {
+    int32_t ret;
+    uint16_t size = 0, sentsize = 0;
+    uint8_t destip[4];
+    uint16_t destport;
+
+    switch (getSn_SR(sn)) {
+    case SOCK_ESTABLISHED :
+        if (getSn_IR(sn) & Sn_IR_CON) {
+            getSn_DIPR(sn, destip);
+            destport = getSn_DPORT(sn);
+
+            ESP_LOGI(TAG,"%d:Connected - %d.%d.%d.%d : %d\r\n", sn, destip[0], destip[1], destip[2], destip[3], destport);
+            setSn_IR(sn, Sn_IR_CON);
+        }
+        if ((size = getSn_RX_RSR(sn)) > 0) { // Don't need to check SOCKERR_BUSY because it doesn't not occur.
+            if (size > EXAMPLE_LOOPBACK_BUF_SIZE) {
+                size = EXAMPLE_LOOPBACK_BUF_SIZE;
+            }
+            ret = recv(sn, buf, size);
+
+            if (ret <= 0) {
+                return ret;    // check SOCKERR_BUSY & SOCKERR_XXX. For showing the occurrence of SOCKERR_BUSY.
+            }
+            size = (uint16_t) ret;
+            sentsize = 0;
+
+            while (size != sentsize) {
+                ret = send(sn, buf + sentsize, size - sentsize);
+                if (ret < 0) {
+                    close(sn);
+                    return ret;
+                }
+                sentsize += ret; // Don't care SOCKERR_BUSY, because it is zero.
+            }
+        }
+        break;
+    case SOCK_CLOSE_WAIT :
+        if ((ret = disconnect(sn)) != SOCK_OK) {
+            return ret;
+        }
+        ESP_LOGI(TAG,"%d:Socket Closed\r\n", sn);
+        break;
+    case SOCK_INIT :
+        ESP_LOGI(TAG,"%d:Listen, TCP server loopback, port [%d]\r\n", sn, port);
+        if ((ret = listen(sn)) != SOCK_OK) {
+            return ret;
+        }
+        break;
+    case SOCK_CLOSED:
+        if ((ret = socket(sn, Sn_MR_TCP, port, 0x00)) != sn) {
+            return ret;
+        }
+        ESP_LOGI(TAG, "%d:Socket opened\r\n",sn);
+        break;
+    default:
+        break;
+    }
+    return 1;
+}
+
 static void tcp_server_task(void *arg)
 {
     (void)arg;
+    int32_t retval = 0;
     int32_t rc;
 
     s_tx_buf[0] = EXAMPLE_TX_BUF_KB;
@@ -158,57 +173,13 @@ static void tcp_server_task(void *arg)
             s_link_was_up = true;
         }
 
-        uint8_t state = getSn_SR(EXAMPLE_SOCKET_NUM);
-
-        switch (state) {
-        case SOCK_ESTABLISHED:
-            if (getSn_IR(EXAMPLE_SOCKET_NUM) & Sn_IR_CON) {
-                setSn_IR(EXAMPLE_SOCKET_NUM, Sn_IR_CON);
-                ESP_LOGI(TAG, "Client connected");
+        while(1)
+        {
+            if ((retval = loopback_tcps(EXAMPLE_SOCKET_NUM, s_loopback_buf, EXAMPLE_LISTEN_PORT)) < 0) {
+                ESP_LOGI(TAG, " loopback_tcps error : %d\n", retval);
+                while (1){vTaskDelay(pdMS_TO_TICKS(10));}
             }
-            rc = do_retransmit(EXAMPLE_SOCKET_NUM,
-                                       s_loopback_buf,
-                                       EXAMPLE_LOOPBACK_BUF_SIZE);
-            break;
-
-        case SOCK_CLOSE_WAIT:
-            rc = do_retransmit(EXAMPLE_SOCKET_NUM,
-                                       s_loopback_buf,
-                                       EXAMPLE_LOOPBACK_BUF_SIZE);
-            if (rc >= 0) {
-                rc = disconnect(EXAMPLE_SOCKET_NUM);
-                if (rc == SOCK_OK) {
-                    ESP_LOGI(TAG, "Client disconnected");
-                    rc = 1;
-                }
-            }
-            break;
-
-        case SOCK_INIT:
-            rc = listen(EXAMPLE_SOCKET_NUM);
-            if (rc == SOCK_OK) {
-                ESP_LOGI(TAG, "Listening on port %u", (unsigned)EXAMPLE_LISTEN_PORT);
-                rc = 1;
-            }
-            break;
-
-        case SOCK_CLOSED:
-            // Open socket in non-blocking mode (SF_IO_NONBLOCK)
-            rc = socket(EXAMPLE_SOCKET_NUM, Sn_MR_TCP, EXAMPLE_LISTEN_PORT, SF_IO_NONBLOCK);
-            if (rc == EXAMPLE_SOCKET_NUM) {
-                ESP_LOGI(TAG, "Server socket opened (non-blocking)");
-                rc = 1;
-            }
-            break;
-
-        default:
-            rc = 1;
-            break;
-        }
-
-        if (rc < 0) {
-            ESP_LOGW(TAG, "tcp_server_task step failed: %ld", (long)rc);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -217,5 +188,11 @@ static void tcp_server_task(void *arg)
 
 void app_main(void)
 {
+    // loopback_tcps opens the socket in blocking mode (socket flag 0x00), so
+    // this demo can stay in long waits/retries; disable Task WDT to avoid
+    // resets during bring-up and manual network testing.
+    esp_task_wdt_delete(NULL);
+    esp_task_wdt_deinit();
+
     xTaskCreate(tcp_server_task, "tcp_server_task", 8192, NULL, 5, NULL);
 }
