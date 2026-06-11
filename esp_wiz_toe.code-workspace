@@ -27,6 +27,11 @@
         "idf.currentSetup": "C:\\Users\\lihan\\esp\\v5.5.1\\esp-idf",
         "files.associations": {
             "*.h": "c"
-        }
+        },
+        // Builds go through the ESP-IDF extension; keep the generic CMake
+        // Tools extension from auto-configuring or hijacking the build task.
+        "cmake.configureOnOpen": false,
+        "cmake.autoSelectActiveFolder": false,
+        "cmake.ignoreCMakeListsMissing": true
     }
 }
