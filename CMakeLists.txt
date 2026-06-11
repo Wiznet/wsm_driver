@@ -14,6 +14,10 @@ if(CONFIG_ESP_WIZ_TOE_CHIP_W5500)
     set(ESP_WIZ_TOE_CHIP_NAME W5500)
     set(ESP_WIZ_TOE_CHIP_SOURCE "${COMPONENT_DIR}/third_party/ioLibrary_Driver/Ethernet/W5500/w5500.c")
     set(ESP_WIZ_TOE_CHIP_INCLUDE "${COMPONENT_DIR}/third_party/ioLibrary_Driver/Ethernet/W5500")
+elseif(CONFIG_ESP_WIZ_TOE_CHIP_W6300)
+    set(ESP_WIZ_TOE_CHIP_NAME W6300)
+    set(ESP_WIZ_TOE_CHIP_SOURCE "${COMPONENT_DIR}/third_party/ioLibrary_Driver/Ethernet/W6300/w6300.c")
+    set(ESP_WIZ_TOE_CHIP_INCLUDE "${COMPONENT_DIR}/third_party/ioLibrary_Driver/Ethernet/W6300")
 else()
     message(FATAL_ERROR "No supported WIZnet chip selected")
 endif()
@@ -25,6 +29,16 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC
 
 if(CONFIG_ESP_WIZ_TOE_CHIP_W5500)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE WIZNET_TOE_W5500=1)
+endif()
+
+if(CONFIG_ESP_WIZ_TOE_CHIP_W6300)
+    # W6300 talks QSPI frames (opcode + 16-bit address + dummy + data); the
+    # mode bits below are embedded into every opcode by w6300.c.
+    if(CONFIG_ESP_WIZ_TOE_QSPI_QUAD)
+        target_compile_definitions(${COMPONENT_LIB} PUBLIC _WIZCHIP_QSPI_MODE_=QSPI_QUAD_MODE)
+    else()
+        target_compile_definitions(${COMPONENT_LIB} PUBLIC _WIZCHIP_QSPI_MODE_=QSPI_SINGLE_MODE)
+    endif()
 endif()
 
 set(WIZNET_IOLIB_PATH "${COMPONENT_DIR}/third_party/ioLibrary_Driver")

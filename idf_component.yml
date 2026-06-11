@@ -1,6 +1,6 @@
 name: esp_wiz_toe
 version: "1.0.0"
-description: "ESP-IDF SPI port layer for using WIZnet W5500 with the official ioLibrary"
+description: "ESP-IDF SPI/QSPI port layer for using WIZnet W5500/W6300 with the official ioLibrary"
 license: "MIT"
 repository: "https://github.com/Wiznet/esp_wiz_toe"
 url: "https://github.com/Wiznet/esp_wiz_toe"
@@ -8,7 +8,9 @@ tags:
   - ethernet
   - wiznet
   - w5500
+  - w6300
   - spi
+  - qspi
   - toe
 targets:
   - esp32s3
@@ -19,6 +21,7 @@ dependencies:
 examples:
   - path: examples/tcp_client
   - path: examples/tcp_server
+  - path: examples/w6300_loopback
 
 files:
   use_gitignore: true

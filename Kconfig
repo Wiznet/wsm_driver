@@ -14,7 +14,33 @@ choice ESP_WIZ_TOE_CHIP
 config ESP_WIZ_TOE_CHIP_W5500
     bool "W5500"
 
+config ESP_WIZ_TOE_CHIP_W6300
+    bool "W6300"
+
 endchoice
+
+choice ESP_WIZ_TOE_QSPI_MODE
+    prompt "W6300 QSPI mode"
+    depends on ESP_WIZ_TOE_CHIP_W6300
+    default ESP_WIZ_TOE_QSPI_SINGLE
+
+config ESP_WIZ_TOE_QSPI_SINGLE
+    bool "Single (1-bit, standard SPI wiring)"
+
+config ESP_WIZ_TOE_QSPI_QUAD
+    bool "Quad (4-bit, requires IO2/IO3 wiring)"
+
+endchoice
+
+config ESP_WIZ_TOE_PIN_IO2
+    int "GPIO: QSPI IO2"
+    depends on ESP_WIZ_TOE_QSPI_QUAD
+    default 15
+
+config ESP_WIZ_TOE_PIN_IO3
+    int "GPIO: QSPI IO3"
+    depends on ESP_WIZ_TOE_QSPI_QUAD
+    default 16
 
 config ESP_WIZ_TOE_SPI_HOST
     int "SPI host (2=SPI2, 3=SPI3)"

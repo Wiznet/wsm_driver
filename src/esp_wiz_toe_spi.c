@@ -15,6 +15,15 @@
 #define ESP_WIZ_TOE_HAS_IOLIB 0
 #endif
 
+/* W6300 uses QSPI framing (opcode + 16-bit address + dummy + data) instead of
+ * the W5500 byte/burst callback interface. The defined(W6300) guard keeps the
+ * comparison safe when ioLibrary headers are absent. */
+#if ESP_WIZ_TOE_HAS_IOLIB && defined(W6300) && (_WIZCHIP_ == W6300)
+#define ESP_WIZ_TOE_USE_QSPI 1
+#else
+#define ESP_WIZ_TOE_USE_QSPI 0
+#endif
+
 static const char *TAG = "esp_wiz_toe_spi";
 
 #ifdef CONFIG_ESP_WIZ_TOE_SPI_HOST
@@ -65,6 +74,18 @@ static const char *TAG = "esp_wiz_toe_spi";
 #define ESP_WIZ_TOE_DEF_SPI_INT_PIN GPIO_NUM_14
 #endif
 
+#ifdef CONFIG_ESP_WIZ_TOE_PIN_IO2
+#define ESP_WIZ_TOE_DEF_SPI_IO2_PIN ((gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_IO2)
+#else
+#define ESP_WIZ_TOE_DEF_SPI_IO2_PIN GPIO_NUM_15
+#endif
+
+#ifdef CONFIG_ESP_WIZ_TOE_PIN_IO3
+#define ESP_WIZ_TOE_DEF_SPI_IO3_PIN ((gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_IO3)
+#else
+#define ESP_WIZ_TOE_DEF_SPI_IO3_PIN GPIO_NUM_16
+#endif
+
 #define ESP_WIZ_TOE_DEF_SPI_TIMEOUT_MS 1000U
 
 typedef struct {
@@ -96,6 +117,8 @@ static void apply_defaults(esp_wiz_toe_spi_config_t *cfg)
     cfg->pin_miso = resolve_pin(cfg->pin_miso, ESP_WIZ_TOE_DEF_SPI_MISO_PIN);
     cfg->pin_int = resolve_pin(cfg->pin_int, ESP_WIZ_TOE_DEF_SPI_INT_PIN);
     cfg->pin_rst = resolve_pin(cfg->pin_rst, ESP_WIZ_TOE_DEF_SPI_RST_PIN);
+    cfg->pin_io2 = resolve_pin(cfg->pin_io2, ESP_WIZ_TOE_DEF_SPI_IO2_PIN);
+    cfg->pin_io3 = resolve_pin(cfg->pin_io3, ESP_WIZ_TOE_DEF_SPI_IO3_PIN);
     if (cfg->lock_timeout_ms == 0) {
         cfg->lock_timeout_ms = ESP_WIZ_TOE_DEF_SPI_TIMEOUT_MS;
     }
@@ -109,6 +132,7 @@ static TickType_t get_wait_ticks(void)
     return pdMS_TO_TICKS(s_ctx.cfg.lock_timeout_ms);
 }
 
+#if !ESP_WIZ_TOE_USE_QSPI
 static esp_err_t spi_transfer_locked(const uint8_t *tx, uint8_t *rx, size_t len)
 {
     const TickType_t wait_ticks = get_wait_ticks();
@@ -147,6 +171,7 @@ static esp_err_t spi_transfer_locked(const uint8_t *tx, uint8_t *rx, size_t len)
     (void)xSemaphoreGiveRecursive(s_ctx.lock);
     return ret;
 }
+#endif /* !ESP_WIZ_TOE_USE_QSPI */
 
 #if ESP_WIZ_TOE_HAS_IOLIB
 static void wizchip_cs_select(void)
@@ -180,6 +205,7 @@ static void wizchip_cs_deselect(void)
     (void)xSemaphoreGiveRecursive(s_ctx.lock);
 }
 
+#if !ESP_WIZ_TOE_USE_QSPI
 static uint8_t wizchip_spi_read_byte(void)
 {
     const uint8_t tx = 0x00;
@@ -237,6 +263,61 @@ static void wizchip_spi_write_burst_6100(uint8_t *buf, datasize_t len)
     wizchip_spi_write_burst(buf, (uint16_t)len);
 }
 #endif
+#endif /* !ESP_WIZ_TOE_USE_QSPI */
+
+#if ESP_WIZ_TOE_USE_QSPI
+/*
+ * W6300 QSPI frame: opcode (8 bits, always 1-line) + 16-bit address + dummy
+ * clocks + data. The dummy clocks (8 in single mode, 2 in quad mode) are
+ * emitted by widening the address phase to 24 bits with a trailing zero byte,
+ * which matches the official WIZnet-PICO-C reference bit-for-bit: it transmits
+ * the dummy as a driven 0x00 byte after the address in both modes.
+ *
+ * Callbacks are invoked by w6300.c with CS already asserted (CS._select())
+ * and the recursive lock held, so transactions go straight to the device.
+ */
+static void wizchip_qspi_xfer(uint8_t opcode, uint16_t addr, const uint8_t *tx, uint8_t *rx, uint16_t len)
+{
+    if (len == 0) {
+        return;
+    }
+
+    spi_transaction_ext_t t = {
+        .base = {
+            .flags = SPI_TRANS_VARIABLE_CMD | SPI_TRANS_VARIABLE_ADDR | SPI_TRANS_VARIABLE_DUMMY,
+            .cmd = opcode,
+            .addr = (uint32_t)addr << 8,
+            .length = (tx != NULL) ? (size_t)len * 8 : 0,
+            .rxlength = (rx != NULL) ? (size_t)len * 8 : 0,
+            .tx_buffer = tx,
+            .rx_buffer = rx,
+        },
+        .command_bits = 8,
+        .address_bits = 24,
+        .dummy_bits = 0,
+    };
+
+#ifdef CONFIG_ESP_WIZ_TOE_QSPI_QUAD
+    t.base.flags |= SPI_TRANS_MODE_QIO | SPI_TRANS_MULTILINE_ADDR;
+#endif
+
+    esp_err_t ret = spi_device_transmit(s_ctx.spi_dev, (spi_transaction_t *)&t);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "qspi xfer failed op=0x%02X addr=0x%04X len=%u (%s)",
+                 opcode, addr, (unsigned)len, esp_err_to_name(ret));
+    }
+}
+
+static void wizchip_qspi_read(uint8_t opcode, uint16_t addr, uint8_t *buf, uint16_t len)
+{
+    wizchip_qspi_xfer(opcode, addr, NULL, buf, len);
+}
+
+static void wizchip_qspi_write(uint8_t opcode, uint16_t addr, uint8_t *buf, uint16_t len)
+{
+    wizchip_qspi_xfer(opcode, addr, buf, NULL, len);
+}
+#endif /* ESP_WIZ_TOE_USE_QSPI */
 
 static void wizchip_critical_enter(void)
 {
@@ -275,6 +356,16 @@ esp_err_t esp_wiz_toe_spi_init(const esp_wiz_toe_spi_config_t *cfg)
         .quadhd_io_num = -1,
         .max_transfer_sz = 2048,
     };
+#if ESP_WIZ_TOE_USE_QSPI
+    // A single QSPI burst can span a full socket buffer; cover the largest
+    // size selectable via Kconfig (16 KB) plus the frame header.
+    buscfg.max_transfer_sz = 16 * 1024 + 8;
+#ifdef CONFIG_ESP_WIZ_TOE_QSPI_QUAD
+    buscfg.quadwp_io_num = s_ctx.cfg.pin_io2;
+    buscfg.quadhd_io_num = s_ctx.cfg.pin_io3;
+    buscfg.flags = SPICOMMON_BUSFLAG_MASTER | SPICOMMON_BUSFLAG_QUAD;
+#endif
+#endif
     ESP_GOTO_ON_ERROR(spi_bus_initialize(s_ctx.cfg.host_id, &buscfg, SPI_DMA_CH_AUTO), err, TAG, "spi_bus_initialize failed");
 
     spi_device_interface_config_t devcfg = {
@@ -282,6 +373,10 @@ esp_err_t esp_wiz_toe_spi_init(const esp_wiz_toe_spi_config_t *cfg)
         .clock_speed_hz = s_ctx.cfg.clock_hz,
         .spics_io_num = -1,
         .queue_size = 1,
+#if ESP_WIZ_TOE_USE_QSPI
+        // QSPI frames are phased (cmd/addr/dummy/data) -> half-duplex device.
+        .flags = SPI_DEVICE_HALFDUPLEX,
+#endif
     };
     ESP_GOTO_ON_ERROR(spi_bus_add_device(s_ctx.cfg.host_id, &devcfg, &s_ctx.spi_dev), err_bus, TAG, "spi_bus_add_device failed");
 
@@ -352,16 +447,21 @@ esp_err_t esp_wiz_toe_spi_register_iolib_callbacks(void)
 #if ESP_WIZ_TOE_HAS_IOLIB
     reg_wizchip_cris_cbfunc(wizchip_critical_enter, wizchip_critical_exit);
     reg_wizchip_cs_cbfunc(wizchip_cs_select, wizchip_cs_deselect);
-#if _WIZCHIP_ == W6100
+#if ESP_WIZ_TOE_USE_QSPI
+    // WIZCHIP.IF is a union: registering the SPI byte callbacks as well would
+    // clobber the QSPI function pointers, so register only the QSPI pair.
+    reg_wizchip_qspi_cbfunc(wizchip_qspi_read, wizchip_qspi_write);
+#elif _WIZCHIP_ == W6100
     reg_wizchip_spi_cbfunc(
         wizchip_spi_read_byte,
         wizchip_spi_write_byte,
         wizchip_spi_read_burst_6100,
         wizchip_spi_write_burst_6100);
+    reg_wizchip_spiburst_cbfunc(wizchip_spi_read_burst, wizchip_spi_write_burst);
 #else
     reg_wizchip_spi_cbfunc(wizchip_spi_read_byte, wizchip_spi_write_byte);
-#endif
     reg_wizchip_spiburst_cbfunc(wizchip_spi_read_burst, wizchip_spi_write_burst);
+#endif
     return ESP_OK;
 #else
     ESP_LOGW(TAG, "ioLibrary headers not found; callback registration skipped");

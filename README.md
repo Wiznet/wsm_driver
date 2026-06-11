@@ -20,9 +20,23 @@ Application code uses ioLibrary APIs directly (`wizchip_init`, `socket`, `connec
 
 ## Supported WIZnet TOE chips
 
-- W5500
+- W5500 (standard SPI)
+- W6300 (QSPI: single 1-bit or quad 4-bit mode)
 
 Other WIZnet chips may be added later.
+
+### W6300 notes
+
+W6300 uses QSPI framing (opcode + 16-bit address + dummy clocks + data) instead
+of the W5500 SPI byte/burst interface. The port layer drives it with the
+ESP32-S3 SPI master in half-duplex mode.
+
+- **Single mode** (default): uses the same 4-wire wiring as W5500
+  (MOSI=IO0, MISO=IO1, SCLK, CS).
+- **Quad mode**: requires two extra data lines (IO2/IO3) wired to the chip and
+  selected via `Component config -> WIZnet TOE Component -> W6300 QSPI mode`.
+
+Select the chip in menuconfig: `Component config -> WIZnet TOE Component -> WIZnet chip -> W6300`.
 
 ## Public API
 
@@ -76,6 +90,7 @@ Available examples:
 
 - `examples/tcp_client`
 - `examples/tcp_server`
+- `examples/w6300_loopback` (W6300, TCP+UDP loopback using the official ioLibrary `loopback.c`)
 
 Each example is an independent ESP-IDF project that uses ioLibrary APIs
 directly after SPI port-layer initialization. Build from the example folder:
@@ -101,6 +116,7 @@ Example-specific endpoint values are kept in each example source for simplicity:
 
 - `examples/tcp_client/main/main.c` (`EXAMPLE_SERVER_IP`, `EXAMPLE_SERVER_PORT`)
 - `examples/tcp_server/main/main.c` (`EXAMPLE_LISTEN_PORT`)
+- `examples/w6300_loopback/main/main.c` (`EXAMPLE_TCP_LISTEN_PORT`, `EXAMPLE_UDP_LISTEN_PORT`)
 
 
 ## Using this component from ESP Component Registry
@@ -140,6 +156,7 @@ For example, you can refer to:
 
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_client/main/main.c`
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_server/main/main.c`
+`managed_components/wiznet__esp_wiz_toe/examples/w6300_loopback/main/main.c`
 
 Then paste or adapt the code into your project source file, for example:
 
