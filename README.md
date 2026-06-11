@@ -86,11 +86,31 @@ If that folder is missing, the component cannot provide ioLibrary callback bindi
 
 ## Examples
 
-Available examples:
+Available examples (ported from [WIZnet-PICO-C](https://github.com/WIZnet-ioNIC/WIZnet-PICO-C);
+each works with W5500 or W6300 — switch the chip in menuconfig — except
+`pppoe`, which is W5500-only):
 
-- `examples/tcp_client`
-- `examples/tcp_server`
-- `examples/w6300_loopback` (W6300, TCP+UDP loopback using the official ioLibrary `loopback.c`)
+- `examples/loopback` — TCP server loopback (TCP client / UDP via defines)
+- `examples/tcp_client` — TCP loopback client
+- `examples/tcp_server` — TCP loopback server
+- `examples/tcp_server_multi_socket` — same port served on every hardware socket
+- `examples/udp` — UDP echo server or client (menuconfig choice)
+- `examples/udp_multicast` — UDP multicast receiver (224.0.0.5:30000)
+- `examples/dhcp_dns` — DHCP address lease + DNS lookup
+- `examples/sntp` — network time from time.google.com
+- `examples/tftp` — TFTP client file read
+- `examples/http` — HTTP web server on port 80
+- `examples/mqtt` — MQTT publish / subscribe / both (menuconfig choice)
+- `examples/netbios` — NetBIOS name service responder
+- `examples/network_install` — PHY link / cable bring-up check
+- `examples/pppoe` — PPPoE session establishment (**W5500 only**; the vendored
+  PPPoE driver uses W5500 registers absent on W6300)
+- `examples/upnp` — IGD discovery + port mapping via serial menu
+- `examples/w6300_loopback` — W6300 reference (chip pinned to W6300)
+
+Not ported from WIZnet-PICO-C: `can` (RP2040 PIO-specific), `ftp` (FTP module
+not present in the ioLibrary submodule), `tcp_client_over_ssl` (planned;
+requires an mbedtls port layer).
 
 Each example is an independent ESP-IDF project that uses ioLibrary APIs
 directly after SPI port-layer initialization. Build from the example folder:

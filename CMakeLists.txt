@@ -46,21 +46,46 @@ set(WIZNET_IOLIB_PATH "${COMPONENT_DIR}/third_party/ioLibrary_Driver")
 if(EXISTS "${WIZNET_IOLIB_PATH}/Ethernet/socket.c")
     set(ESP_WIZ_TOE_IOLIB_SOURCES
         "${WIZNET_IOLIB_PATH}/Application/loopback/loopback.c"
+        "${WIZNET_IOLIB_PATH}/Application/multicast/multicast.c"
         "${WIZNET_IOLIB_PATH}/Ethernet/socket.c"
         "${WIZNET_IOLIB_PATH}/Ethernet/wizchip_conf.c"
         "${ESP_WIZ_TOE_CHIP_SOURCE}"
         "${WIZNET_IOLIB_PATH}/Internet/DHCP/dhcp.c"
         "${WIZNET_IOLIB_PATH}/Internet/DNS/dns.c"
+        "${WIZNET_IOLIB_PATH}/Internet/SNTP/sntp.c"
+        "${WIZNET_IOLIB_PATH}/Internet/TFTP/tftp.c"
+        "${WIZNET_IOLIB_PATH}/Internet/TFTP/netutil.c"
+        "${WIZNET_IOLIB_PATH}/Internet/httpServer/httpParser.c"
+        "${WIZNET_IOLIB_PATH}/Internet/httpServer/httpServer.c"
+        "${WIZNET_IOLIB_PATH}/Internet/httpServer/httpUtil.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTClient.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/mqtt_interface.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTConnectClient.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTConnectServer.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTDeserializePublish.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTFormat.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTPacket.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTSerializePublish.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTSubscribeClient.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTSubscribeServer.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTUnsubscribeClient.c"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src/MQTTUnsubscribeServer.c"
     )
 
     target_include_directories(${COMPONENT_LIB} PUBLIC
         "${WIZNET_IOLIB_PATH}"
         "${WIZNET_IOLIB_PATH}/Application/loopback"
+        "${WIZNET_IOLIB_PATH}/Application/multicast"
         "${WIZNET_IOLIB_PATH}/Ethernet"
         "${ESP_WIZ_TOE_CHIP_INCLUDE}"
         "${WIZNET_IOLIB_PATH}/Internet"
         "${WIZNET_IOLIB_PATH}/Internet/DHCP"
         "${WIZNET_IOLIB_PATH}/Internet/DNS"
+        "${WIZNET_IOLIB_PATH}/Internet/SNTP"
+        "${WIZNET_IOLIB_PATH}/Internet/TFTP"
+        "${WIZNET_IOLIB_PATH}/Internet/httpServer"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT"
+        "${WIZNET_IOLIB_PATH}/Internet/MQTT/MQTTPacket/src"
     )
 
     target_sources(${COMPONENT_LIB} PRIVATE ${ESP_WIZ_TOE_IOLIB_SOURCES})

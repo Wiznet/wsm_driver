@@ -1,11 +1,15 @@
 {
     // Open this file (File -> Open Workspace from File) instead of the bare
     // folder. The buildable projects (examples) are listed FIRST so the
-    // ESP-IDF extension targets tcp_client by default — just press the
+    // ESP-IDF extension targets an example by default — just press the
     // status-bar build button. Switch examples with the folder item in the
     // status bar (or "ESP-IDF: Pick a Workspace Folder").
     // The component root is included last for browsing/editing the sources.
     "folders": [
+        {
+            "name": "example: loopback",
+            "path": "examples/loopback"
+        },
         {
             "name": "example: tcp_client",
             "path": "examples/tcp_client"
@@ -13,6 +17,54 @@
         {
             "name": "example: tcp_server",
             "path": "examples/tcp_server"
+        },
+        {
+            "name": "example: tcp_server_multi_socket",
+            "path": "examples/tcp_server_multi_socket"
+        },
+        {
+            "name": "example: udp",
+            "path": "examples/udp"
+        },
+        {
+            "name": "example: udp_multicast",
+            "path": "examples/udp_multicast"
+        },
+        {
+            "name": "example: dhcp_dns",
+            "path": "examples/dhcp_dns"
+        },
+        {
+            "name": "example: sntp",
+            "path": "examples/sntp"
+        },
+        {
+            "name": "example: tftp",
+            "path": "examples/tftp"
+        },
+        {
+            "name": "example: http",
+            "path": "examples/http"
+        },
+        {
+            "name": "example: mqtt",
+            "path": "examples/mqtt"
+        },
+        {
+            "name": "example: netbios",
+            "path": "examples/netbios"
+        },
+        {
+            "name": "example: network_install",
+            "path": "examples/network_install"
+        },
+        {
+            "name": "example: pppoe",
+            "path": "examples/pppoe"
+        },
+        {
+            "name": "example: upnp",
+            "path": "examples/upnp"
         },
         {
             "name": "example: w6300_loopback",
@@ -25,6 +77,8 @@
     ],
     "settings": {
         "idf.currentSetup": "C:\\Users\\lihan\\esp\\v5.5.1\\esp-idf",
+        // This component is esp32s3-only; default every example to that target.
+        "idf.adapterTargetName": "esp32s3",
         "files.associations": {
             "*.h": "c"
         },

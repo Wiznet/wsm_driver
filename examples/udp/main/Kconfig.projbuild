@@ -1,0 +1,15 @@
+menu "UDP Example Configuration"
+
+choice EXAMPLE_UDP_ROLE
+    prompt "UDP role"
+    default EXAMPLE_UDP_SERVER
+
+config EXAMPLE_UDP_SERVER
+    bool "UDP server (echo on port 5000)"
+
+config EXAMPLE_UDP_CLIENT
+    bool "UDP client (loopback to a peer server)"
+
+endchoice
+
+endmenu
