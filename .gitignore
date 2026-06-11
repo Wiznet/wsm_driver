@@ -9,6 +9,10 @@
 **/sdkconfig.old
 **/dependencies.lock
 
+# Editor-local settings (machine-specific paths; the shared entry point is
+# esp_wiz_toe.code-workspace which is committed)
+.vscode/
+
 # Local logs
 **/build_check.log
 **/build_result.log
