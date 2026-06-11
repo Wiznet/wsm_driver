@@ -100,9 +100,6 @@ cd examples/tcp_client
 idf.py build
 ```
 
-When the repository root is opened in VSCode, per-example build/flash tasks
-are provided in `.vscode/tasks.json` (`Ctrl+Shift+P` -> `Tasks: Run Task`).
-
 Chip, SPI host/clock/pin defaults and per-socket RX/TX buffer size can be
 changed in menuconfig:
 
