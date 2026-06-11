@@ -14,7 +14,7 @@ targets:
   - esp32s3
 dependencies:
   idf:
-    version: ">=5.4.0,<5.5.0"
+    version: ">=5.4.0,<5.6.0"
 
 examples:
   - path: examples/tcp_client
@@ -27,6 +27,8 @@ files:
     - ".git/**"
     - "TODO.md"
     - ".componentignore"
+    - ".vscode/**"
+    - "esp_wiz_toe.code-workspace"
     - "examples/**/sdkconfig.old"
     - "third_party/ioLibrary_Driver/.git"
     - "third_party/ioLibrary_Driver/**/*.chm"

@@ -35,6 +35,21 @@ Header: `include/esp_wiz_toe.h`
 - `esp_wiz_toe_spi_wizchip_check`
 - `esp_wiz_toe_spi_link_is_up`
 
+## Quick start (clone & build)
+
+The repository root is a component; the buildable projects are the examples.
+
+```bash
+git clone --recursive https://github.com/Wiznet/esp_wiz_toe.git
+cd esp_wiz_toe
+idf.py -C examples/tcp_client build      # -C selects the project directory
+```
+
+For VSCode, open `esp_wiz_toe.code-workspace` (File -> Open Workspace from
+File). The workspace registers each example as a folder, so the ESP-IDF
+extension works as usual — run `ESP-IDF: Pick a Workspace Folder`, choose an
+example, then use the normal build/flash/monitor buttons.
+
 ## Usage flow
 
 1. Fill `esp_wiz_toe_spi_config_t`
@@ -62,9 +77,19 @@ Available examples:
 - `examples/tcp_client`
 - `examples/tcp_server`
 
-Each example uses ioLibrary APIs directly after SPI port-layer initialization.
+Each example is an independent ESP-IDF project that uses ioLibrary APIs
+directly after SPI port-layer initialization. Build from the example folder:
 
-SPI host/clock/pin defaults and per-socket RX/TX buffer size can be changed in menuconfig:
+```bash
+cd examples/tcp_client
+idf.py build
+```
+
+When the repository root is opened in VSCode, per-example build/flash tasks
+are provided in `.vscode/tasks.json` (`Ctrl+Shift+P` -> `Tasks: Run Task`).
+
+Chip, SPI host/clock/pin defaults and per-socket RX/TX buffer size can be
+changed in menuconfig:
 
 - `Component config -> WIZnet TOE Component -> WIZnet chip -> W5500`
 - `Component config -> WIZnet TOE Component -> SPI host (2=SPI2, 3=SPI3)`
@@ -115,7 +140,6 @@ For example, you can refer to:
 
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_client/main/main.c`
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_server/main/main.c`
-
 
 Then paste or adapt the code into your project source file, for example:
 

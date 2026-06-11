@@ -1,0 +1,28 @@
+{
+    // Open this file (File -> Open Workspace from File) instead of the bare
+    // folder. The repository root is an ESP-IDF *component*; the buildable
+    // projects are the examples. Registering each example as a workspace
+    // folder lets the ESP-IDF extension build/flash/monitor them directly:
+    // run "ESP-IDF: Pick a Workspace Folder" and choose an example, then use
+    // the normal extension buttons.
+    "folders": [
+        {
+            "name": "esp_wiz_toe (component)",
+            "path": "."
+        },
+        {
+            "name": "example: tcp_client",
+            "path": "examples/tcp_client"
+        },
+        {
+            "name": "example: tcp_server",
+            "path": "examples/tcp_server"
+        }
+    ],
+    "settings": {
+        "idf.currentSetup": "C:\\Users\\lihan\\esp\\v5.5.1\\esp-idf",
+        "files.associations": {
+            "*.h": "c"
+        }
+    }
+}
