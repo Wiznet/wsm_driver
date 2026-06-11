@@ -17,6 +17,10 @@
         {
             "name": "example: tcp_server",
             "path": "examples/tcp_server"
+        },
+        {
+            "name": "example: w6300_loopback",
+            "path": "examples/w6300_loopback"
         }
     ],
     "settings": {
