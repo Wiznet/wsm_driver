@@ -19,10 +19,14 @@ config ESP_WIZ_TOE_CHIP_W6300
 
 endchoice
 
+# Pin/clock defaults are chip-specific: selecting W6300 below auto-fills the
+# W6300 wiring, W5500 keeps the original defaults. Override per example only
+# when a board differs.
+
 choice ESP_WIZ_TOE_QSPI_MODE
     prompt "W6300 QSPI mode"
     depends on ESP_WIZ_TOE_CHIP_W6300
-    default ESP_WIZ_TOE_QSPI_SINGLE
+    default ESP_WIZ_TOE_QSPI_QUAD
 
 config ESP_WIZ_TOE_QSPI_SINGLE
     bool "Single (1-bit, standard SPI wiring)"
@@ -35,12 +39,12 @@ endchoice
 config ESP_WIZ_TOE_PIN_IO2
     int "GPIO: QSPI IO2"
     depends on ESP_WIZ_TOE_QSPI_QUAD
-    default 15
+    default 21
 
 config ESP_WIZ_TOE_PIN_IO3
     int "GPIO: QSPI IO3"
     depends on ESP_WIZ_TOE_QSPI_QUAD
-    default 16
+    default 18
 
 config ESP_WIZ_TOE_SPI_HOST
     int "SPI host (2=SPI2, 3=SPI3)"
@@ -50,18 +54,22 @@ config ESP_WIZ_TOE_SPI_HOST
 config ESP_WIZ_TOE_SPI_CLOCK_HZ
     int "SPI clock (Hz)"
     range 1000000 80000000
+    default 1000000 if ESP_WIZ_TOE_CHIP_W6300
     default 33000000
 
 config ESP_WIZ_TOE_PIN_MISO
-    int "GPIO: MISO"
+    int "GPIO: MISO/IO1 (D1)"
+    default 38 if ESP_WIZ_TOE_CHIP_W6300
     default 13
 
 config ESP_WIZ_TOE_PIN_MOSI
-    int "GPIO: MOSI"
+    int "GPIO: MOSI/IO0 (D0)"
+    default 47 if ESP_WIZ_TOE_CHIP_W6300
     default 11
 
 config ESP_WIZ_TOE_PIN_SCLK
     int "GPIO: SCLK"
+    default 17 if ESP_WIZ_TOE_CHIP_W6300
     default 12
 
 config ESP_WIZ_TOE_PIN_CS
@@ -70,10 +78,12 @@ config ESP_WIZ_TOE_PIN_CS
 
 config ESP_WIZ_TOE_PIN_RST
     int "GPIO: RESET"
+    default 8 if ESP_WIZ_TOE_CHIP_W6300
     default 9
 
 config ESP_WIZ_TOE_PIN_INT
     int "GPIO: INT"
+    default 9 if ESP_WIZ_TOE_CHIP_W6300
     default 14
 
 config ESP_WIZ_TOE_RX_BUF_KB
