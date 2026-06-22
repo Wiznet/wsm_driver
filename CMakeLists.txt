@@ -90,9 +90,13 @@ if(EXISTS "${WIZNET_IOLIB_PATH}/Ethernet/socket.c")
 
     target_sources(${COMPONENT_LIB} PRIVATE ${ESP_WIZ_TOE_IOLIB_SOURCES})
 
-    # Keep strict warnings for project code, but relax warning-as-error for bundled third-party code.
-    set_source_files_properties(${ESP_WIZ_TOE_IOLIB_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-error")
-    set_source_files_properties("${WIZNET_IOLIB_PATH}/Ethernet/socket.c" PROPERTIES COMPILE_OPTIONS "-Wno-error=misleading-indentation")
+    # Keep strict warnings for project code, but silence the bundled third-party
+    # code entirely. A plain -Wno-error is not enough here: ESP-IDF promotes
+    # specific diagnostics with -Werror=format / -Werror=parentheses, which a
+    # general -Wno-error does NOT undo (GCC keeps explicit -Werror=foo). The
+    # vendored ioLibrary trips those (e.g. %d with int32_t, && within ||), so
+    # suppress all warnings on these sources with -w.
+    set_source_files_properties(${ESP_WIZ_TOE_IOLIB_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
 else()
     message(FATAL_ERROR "ioLibrary_Driver submodule not found at ${WIZNET_IOLIB_PATH}. Run: git submodule update --init --recursive")
 endif()

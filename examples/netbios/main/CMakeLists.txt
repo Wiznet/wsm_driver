@@ -13,3 +13,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-format          # int != int32_t as far as the compiler is concerned because gcc has int32_t as long int
     -Wno-unused-function
     )
+
+# Vendored example source from WIZnet-PICO-C; keep warnings non-fatal.
+set_source_files_properties("netbios.c" PROPERTIES COMPILE_OPTIONS "-Wno-error;-w")
