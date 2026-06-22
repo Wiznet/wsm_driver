@@ -28,6 +28,7 @@ examples:
   - path: examples/pppoe
   - path: examples/sntp
   - path: examples/tcp_client
+  - path: examples/tcp_client_over_ssl
   - path: examples/tcp_server
   - path: examples/tcp_server_multi_socket
   - path: examples/tftp

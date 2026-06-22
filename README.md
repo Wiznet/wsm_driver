@@ -106,11 +106,12 @@ each works with W5500 or W6300 — switch the chip in menuconfig — except
 - `examples/pppoe` — PPPoE session establishment (**W5500 only**; the vendored
   PPPoE driver uses W5500 registers absent on W6300)
 - `examples/upnp` — IGD discovery + port mapping via serial menu
+- `examples/tcp_client_over_ssl` — TLS client over the WIZnet socket using
+  mbedTLS (cert verification disabled for the demo)
 - `examples/w6300_loopback` — W6300 reference (chip pinned to W6300)
 
-Not ported from WIZnet-PICO-C: `can` (RP2040 PIO-specific), `ftp` (FTP module
-not present in the ioLibrary submodule), `tcp_client_over_ssl` (planned;
-requires an mbedtls port layer).
+Not ported from WIZnet-PICO-C: `can` (RP2040 PIO-specific) and `ftp` (FTP
+module not present in the ioLibrary submodule).
 
 Each example is an independent ESP-IDF project that uses ioLibrary APIs
 directly after SPI port-layer initialization. Build from the example folder:
