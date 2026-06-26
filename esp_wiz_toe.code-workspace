@@ -27,6 +27,10 @@
             "path": "examples/tcp_server_multi_socket"
         },
         {
+            "name": "example: tcp_server_over_ssl",
+            "path": "examples/tcp_server_over_ssl"
+        },
+        {
             "name": "example: udp",
             "path": "examples/udp"
         },

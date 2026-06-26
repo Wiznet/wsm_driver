@@ -1,0 +1,14 @@
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
+# WIZnet chip defaults to W5500; switch to W6300 in menuconfig:
+#   Component config -> WIZnet TOE Component -> WIZnet chip
+# --- esp_wiz_toe shared settings (copied from loopback) ---
+CONFIG_ESP_WIZ_TOE_ENABLED=y
+CONFIG_ESP_WIZ_TOE_CHIP_W6300=y
+# pins/clock/QSPI come from the component Kconfig W6300 defaults
+# --- mbedTLS: the RSA-only ciphersuites this example offers need static-RSA
+#     key exchange (default y in ESP-IDF; pinned here to be explicit) ---
+CONFIG_MBEDTLS_KEY_EXCHANGE_RSA=y

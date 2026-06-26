@@ -77,14 +77,14 @@ static const wiz_NetInfo g_net_info = {
 
 ### Server port configuration
 
-Every hardware socket listens on the same TCP port, so multiple clients can connect to the device at once. The port is set in `examples/tcp_server_multi_socket/main/main.c`. By default it is port 5000.
+Each hardware socket listens on its own TCP port: `PORT_TCP_SERVER + socket number`. With the base port set to 5000 and 8 sockets, the device listens on ports **5000, 5001, … 5007** — one per socket. The base port is set in `examples/tcp_server_multi_socket/main/main.c`.
 
 ```cpp
 /* Port */
 #define PORT_TCP_SERVER 5000
 ```
 
-The socket count is chip-dependent (`_WIZCHIP_SOCK_NUM_`): the W5500 provides 8 sockets and the W6300 provides 8 sockets, and the example opens a listening socket on this port for each one automatically.
+The socket count is chip-dependent (`_WIZCHIP_SOCK_NUM_`): both the W5500 and the W6300 provide 8 sockets, and the example opens one listening socket per port (5000..5007) automatically. Clients connect to a different port (5000, 5001, …) for each simultaneous connection.
 
 ## Step 4: Build
 
@@ -114,12 +114,12 @@ If flashing succeeds, the assigned IP and the multi-socket server startup log ap
 
 ```
 ip: 192.168.11.2
-TCP multi-socket server on port 5000 (8 sockets)
+TCP multi-socket server on ports 5000-5007 (8 sockets)
 ```
 
 ![][link-run_socket_open]
 
-Open Hercules, select the **TCP Client** tab, enter the device IP `192.168.11.2` and port `5000`, then connect. Open several Hercules windows (or several TCP Client tabs) and connect them all to the same IP and port to use multiple sockets at once.
+Open Hercules, select the **TCP Client** tab, enter the device IP `192.168.11.2` and port `5000`, then connect. Open several Hercules windows (or several TCP Client tabs) and connect each one to a **different port** (`5000`, `5001`, `5002`, …) at the same IP to use multiple sockets at once.
 ![][link-run_hercules]
 
 As each client connects, the device prints the socket number and peer address, for example:
