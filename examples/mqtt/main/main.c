@@ -80,7 +80,7 @@ static const wiz_NetInfo g_net_info = {
 /* MQTT */
 static uint8_t g_mqtt_send_buf[ETHERNET_BUF_MAX_SIZE];
 static uint8_t g_mqtt_recv_buf[ETHERNET_BUF_MAX_SIZE];
-static uint8_t g_mqtt_broker_ip[4] = {192, 168, 11, 3};
+static uint8_t g_mqtt_broker_ip[4] = {192, 168, 11, 100};
 
 static Network g_mqtt_network;
 static MQTTClient g_mqtt_client;
@@ -90,6 +90,7 @@ static MQTTMessage g_mqtt_message;
 #endif
 
 static esp_wiz_toe_spi_config_t g_spi_cfg;
+static bool s_link_up = false;
 static uint8_t g_buf_size_tx[_WIZCHIP_SOCK_NUM_];
 static uint8_t g_buf_size_rx[_WIZCHIP_SOCK_NUM_];
 
@@ -134,6 +135,20 @@ static void wizchip_port_initialize(void)
         printf("wizchip_init failed\n");
         abort();
     }
+
+    do {
+        if (esp_wiz_toe_spi_link_is_up(&s_link_up) != ESP_OK) {
+            printf("PHY link state read failed, retrying...\n");
+            s_link_up = false;
+        } else if (!s_link_up) {
+            printf("PHY link down, waiting...\n");
+        }
+
+        if (!s_link_up) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    } while (!s_link_up);
+    printf("PHY up!\n");
 
     wizchip_setnetinfo((wiz_NetInfo *)&g_net_info);
 
@@ -185,6 +200,8 @@ static void mqtt_task(void *arg)
     uint32_t end_ms = 0;
 
     wizchip_port_initialize();
+
+    // setRCR(0xFF);
 
     const esp_timer_create_args_t timer_args = {
         .callback = repeating_timer_callback,
@@ -286,5 +303,5 @@ void app_main(void)
     esp_task_wdt_delete(NULL);
     esp_task_wdt_deinit();
 
-    xTaskCreate(mqtt_task, "mqtt_task", 8192, NULL, 5, NULL);
+    xTaskCreate(mqtt_task, "mqtt_task", 16384, NULL, 5, NULL);
 }

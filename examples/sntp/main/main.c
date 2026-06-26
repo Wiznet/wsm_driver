@@ -19,7 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "wizchip_conf.h"
-#include "sntp.h"
+#include "esp_wiz_toe/Internet/SNTP/sntp.h"
 
 /* Buffer */
 #define ETHERNET_BUF_MAX_SIZE (1024 * 2)
@@ -135,6 +135,16 @@ static void sntp_task(void *arg)
     datetime time;
 
     wizchip_port_initialize();
+
+    /* W6300/W6100 PHY autoneg takes ~1-2 s after reset. SNTP_run transmits the
+     * NTP request only ONCE (its retry counter never advances), so if that lone
+     * packet goes out before the link is up it is dropped and we simply time
+     * out. Wait for the link before starting SNTP. */
+    printf("waiting for PHY link...\n");
+    while (wizphy_getphylink() != PHY_LINK_ON) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    printf("PHY link up\n");
 
     SNTP_init(SOCKET_SNTP, g_sntp_server_ip, TIMEZONE, g_sntp_buf);
 
