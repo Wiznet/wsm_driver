@@ -2,10 +2,12 @@
 
 ## Step 1: Prepare software
 
-The following serial terminal program and TFTP server are required for the TFTP example test, download and install from below links.
+The following serial terminal program and TFTP server are required for the TFTP example test, download and install from the links below.
 
 - [Tera Term][link-tera_term]
 - [Tftpd64][link-tftpd64]
+
+> **Note:** Tftpd64 is a TFTP server. Do not confuse it with FileZilla (FTP) — TFTP and FTP are different protocols.
 
 ## Step 2: Prepare hardware
 
@@ -63,7 +65,7 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/tftp/main/main.c` file.
+Configure the network settings in `examples/tftp/main/main.c`.
 
 ```cpp
 static const wiz_NetInfo g_net_info = {
@@ -77,19 +79,42 @@ static const wiz_NetInfo g_net_info = {
 
 ### TFTP configuration
 
-The device acts as a TFTP **client**: it sends a read (download) request to the PC-side TFTP server and reports the result. Set the server IP and the file name to download in `examples/tftp/main/main.c`. The client uses socket 1 and a 2048-byte transfer buffer; the read request uses the standard TFTP port (UDP 69).
+The device acts as a TFTP **client**: it sends a read (download) request to the PC-side TFTP server and reports the result. Set the server IP and the file name to download in `examples/tftp/main/main.c`.
 
 ```cpp
-/* Socket */
-#define TFTP_SOCKET_ID 1
-#define TFTP_CLIENT_SOCKET_BUFFER_SIZE 2048
-
 /* TFTP server: change to your environment */
-#define TFTP_SERVER_IP "192.168.11.100"
+#define TFTP_SERVER_IP "192.168.11.4"        // ← your PC's IP address
 #define TFTP_SERVER_FILE_NAME "tftp_test_file.txt"
 ```
 
-## Step 4: Build
+`TFTP_SERVER_IP` must match the PC's IP address on the same subnet as the device.
+
+## Step 4: Configure Tftpd64
+
+Open **Tftpd64** and select the **Tftp Server** tab.
+
+Configure the following items:
+
+| Setting                            | Value                                                      |
+| ---------------------------------- | ---------------------------------------------------------- |
+| Current Directory / Base Directory | Folder that contains `tftp_test_file.txt` (e.g. `C:\tftp`) |
+| Server interfaces                  | Your PC's Ethernet IP address (e.g. `192.168.11.4`)        |
+| TFTP Security                      | **Standard** or **Read Only**                              |
+
+Create the test file in the base directory. For example, create the following file:
+
+```text
+C:\tftp\tftp_test_file.txt
+```
+
+Any file content is fine.
+
+> **Important:** The `Server interfaces` field must not be set to `::1` or `127.0.0.1`. Those are loopback interfaces and cannot be accessed by the WIZnet device. Select the actual PC Ethernet interface IP address, such as `192.168.11.4`.
+
+> **Note:** If the device reports `File not found or No Access`, first check that the file is visible from Tftpd64 by pressing **Show Dir**. The file name must exactly match `TFTP_SERVER_FILE_NAME` in the source code.
+
+
+## Step 5: Build
 
 After completing the setup, build the project.
 
@@ -99,7 +124,7 @@ idf.py build
 
 ![][link-build_log]
 
-## Step 5: Upload and Run
+## Step 6: Upload and Run
 
 Flash the firmware and open the serial monitor. Replace the port with your board's serial port.
 
@@ -113,19 +138,15 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-Before flashing, prepare the PC-side TFTP server. Launch **Tftpd64**, open the **Tftp Server** tab, set **Current Directory** to a folder that contains the file named in `TFTP_SERVER_FILE_NAME` (`tftp_test_file.txt`), and set **Server interface** to the PC address `192.168.11.100`. The device and the PC must be on the same subnet.
-
-![][link-run_tftpd64]
-
-If flashing succeeds, the assigned IP appears, then the device sends the read request to the server.
+When the device boots, the assigned IP appears, then it sends the read request to the server.
 
 ```
 ip: 192.168.11.2
-tftp server ip: 192.168.11.100, file name: tftp_test_file.txt
+tftp server ip: 192.168.11.4, file name: tftp_test_file.txt
 send request
 ```
 
-When the download completes, the device prints the success result in the serial monitor.
+When the download completes, the device prints the success result.
 
 ```
 tftp read success, file name: tftp_test_file.txt
@@ -133,15 +154,54 @@ tftp read success, file name: tftp_test_file.txt
 
 ![][link-run_tftp_success]
 
-If the file cannot be read (wrong file name, wrong server IP, or the server directory does not contain the file), the device prints the failure result instead.
+## Troubleshooting
 
-```
-tftp read fail, file name: tftp_test_file.txt
-```
+### `tftp read fail` — File not found or No Access
+
+Check in order:
+
+1. **File exists in the Tftpd64 directory**
+   Confirm that `tftp_test_file.txt` exists in the folder configured as **Current Directory / Base Directory**.
+
+2. **Check with Show Dir**
+   Press **Show Dir** in Tftpd64. If `tftp_test_file.txt` does not appear there, Tftpd64 cannot access the file.
+
+3. **Check the file extension**
+   On Windows, file extensions may be hidden. Make sure the actual file name is not:
+
+   ```text
+   tftp_test_file.txt.txt
+   ```
+
+4. **Server interface**
+   Tftpd64's **Server interfaces** must be set to the same PC IP address used by `TFTP_SERVER_IP` in the code.
+
+   Example:
+
+   ```cpp
+   #define TFTP_SERVER_IP "192.168.11.4"
+   ```
+
+   Tftpd64 should also be bound to `192.168.11.4`.
+
+5. **Check Tftpd64 Log Viewer**
+   Open the **Log Viewer** tab and run the example again. If Tftpd64 receives the request but cannot open the file, it will report a file access or file not found message.
+
+6. **Firewall / port conflict**
+   If no request appears in the Tftpd64 log, check Windows Firewall or whether another TFTP server is already using UDP port 69.
+
+   ```powershell
+   netstat -ano | Select-String ":69 "
+   ```
+
+### `tftp read fail` — Timeout (no response)
+
+- Check Windows Firewall: allow Tftpd64 on UDP port 69 (both inbound and outbound).
+- Confirm the device and PC are on the same subnet.
 
 ## Appendix
 
-- **TFTP server IP / file name:** `TFTP_SERVER_IP` (`192.168.11.100`) must match the **Server interface** address in Tftpd64, and `TFTP_SERVER_FILE_NAME` (`tftp_test_file.txt`) must exist in the served **Current Directory**.
+- **TFTP server IP / file name:** `TFTP_SERVER_IP` must match the **Server interfaces** address configured in Tftpd64. `TFTP_SERVER_FILE_NAME` must exist in Tftpd64's **Base Directory**.
 - **Retransmission timer:** An `esp_timer` fires `tftp_timeout_handler()` once per second to drive TFTP retransmission, so a dropped packet is retried automatically.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 

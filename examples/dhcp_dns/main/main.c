@@ -116,6 +116,21 @@ static void wizchip_port_initialize(void)
         printf("wizchip_init failed\n");
         abort();
     }
+#if _WIZCHIP_ > W5500
+    {
+        uint8_t physr;
+        uint32_t waited = 0;
+        do {
+            physr = getPHYSR();
+            if (physr & PHYSR_LNK) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited += 100;
+        } while (waited < 3000);
+        if (!(physr & PHYSR_LNK)) {
+            printf("PHY link down after 3 s — check cable\n");
+        }
+    }
+#endif
 }
 
 /* DHCP */

@@ -12,7 +12,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "esp_task_wdt.h"
 #include "esp_wiz_toe.h"
 #include "esp_wiz_toe/Ethernet/socket.h"
 #include "freertos/FreeRTOS.h"
@@ -121,6 +120,21 @@ static void wizchip_port_initialize(void)
 #endif
 
     printf("ip: %d.%d.%d.%d\n", g_net_info.ip[0], g_net_info.ip[1], g_net_info.ip[2], g_net_info.ip[3]);
+#if _WIZCHIP_ > W5500
+    {
+        uint8_t physr;
+        uint32_t waited = 0;
+        do {
+            physr = getPHYSR();
+            if (physr & PHYSR_LNK) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited += 100;
+        } while (waited < 3000);
+        if (!(physr & PHYSR_LNK)) {
+            printf("PHY link down after 3 s — check cable\n");
+        }
+    }
+#endif
 }
 
 static void loopback_task(void *arg)
@@ -162,10 +176,5 @@ static void loopback_task(void *arg)
 
 void app_main(void)
 {
-    // Sockets are opened in blocking mode; disable Task WDT to avoid resets
-    // during long waits and manual network testing.
-    esp_task_wdt_delete(NULL);
-    esp_task_wdt_deinit();
-
-    xTaskCreate(loopback_task, "loopback_task", 8192, NULL, 5, NULL);
+    xTaskCreate(loopback_task, "loopback_task", 16384, NULL, 5, NULL);
 }

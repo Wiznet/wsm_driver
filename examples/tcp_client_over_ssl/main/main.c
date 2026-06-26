@@ -7,8 +7,8 @@
  * verification is disabled (VERIFY_NONE) to keep the demo dependency-free,
  * same as the original. Point g_ssl_target_ip at your TLS server (port 443).
  *
- * mbedTLS is provided by ESP-IDF; the RNG uses the ESP hardware RNG via
- * esp_fill_random (the original used rand(), which is weak on bare metal).
+ * mbedTLS is provided by ESP-IDF (v6: mbedTLS 4.0 / PSA crypto). RNG is
+ * handled internally by PSA — no explicit RNG callback needed.
  *
  * Works with W5500 or W6300 — select the chip in menuconfig:
  *   Component config -> WIZnet TOE Component -> WIZnet chip
@@ -19,8 +19,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "esp_random.h"
-#include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "esp_wiz_toe.h"
 #include "esp_wiz_toe/Ethernet/socket.h"
@@ -31,7 +29,6 @@
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/error.h"
 #include "mbedtls/ssl.h"
-#include "mbedtls/ctr_drbg.h"
 
 /* Buffer */
 #define ETHERNET_BUF_MAX_SIZE (1024 * 2)
@@ -40,7 +37,8 @@
 #define SOCKET_SSL 0
 
 /* Port */
-#define PORT_SSL 443
+#define PORT_SSL     443
+#define PORT_SSL_SRC 5001
 
 /* Connect/recv timeout (ms) */
 #define SSL_RECV_TIMEOUT (1000 * 10)
@@ -71,9 +69,8 @@ static const wiz_NetInfo g_net_info = {
 
 /* SSL */
 static uint8_t g_ssl_buf[ETHERNET_BUF_MAX_SIZE];
-static uint8_t g_ssl_target_ip[4] = {192, 168, 11, 3};
+static uint8_t g_ssl_target_ip[4] = {192, 168, 11, 4};
 
-static mbedtls_ctr_drbg_context g_ctr_drbg;
 static mbedtls_ssl_config g_conf;
 static mbedtls_ssl_context g_ssl;
 
@@ -124,19 +121,26 @@ static void wizchip_port_initialize(void)
     }
 
     wizchip_setnetinfo((wiz_NetInfo *)&g_net_info);
+    printf("ip: %d.%d.%d.%d\n",
+           g_net_info.ip[0], g_net_info.ip[1], g_net_info.ip[2], g_net_info.ip[3]);
 
-    printf("ip: %d.%d.%d.%d\n", g_net_info.ip[0], g_net_info.ip[1], g_net_info.ip[2], g_net_info.ip[3]);
-}
-
-/* mbedTLS RNG callback backed by the ESP hardware RNG */
-static int ssl_random_callback(void *p_rng, unsigned char *output, size_t output_len)
-{
-    (void)p_rng;
-    if (output_len == 0) {
-        return 1;
+#if _WIZCHIP_ > W5500
+    /* W6300 PHY needs up to ~500 ms after reset for auto-negotiation.
+     * Poll until link is up before attempting any TCP connect. */
+    {
+        uint8_t physr;
+        uint32_t waited = 0;
+        do {
+            physr = getPHYSR();
+            if (physr & PHYSR_LNK) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited += 100;
+        } while (waited < 3000);
+        if (!(physr & PHYSR_LNK)) {
+            printf("PHY link down after 3 s — check cable\n");
+        }
     }
-    esp_fill_random(output, output_len);
-    return 0;
+#endif
 }
 
 /* mbedTLS BIO -> WIZnet socket glue. ctx carries the socket number. */
@@ -170,7 +174,6 @@ static int wizchip_ssl_init(uint8_t socket_fd)
 {
     int retval;
 
-    mbedtls_ctr_drbg_init(&g_ctr_drbg);
     mbedtls_ssl_init(&g_ssl);
     mbedtls_ssl_config_init(&g_conf);
 
@@ -183,8 +186,6 @@ static int wizchip_ssl_init(uint8_t socket_fd)
     }
 
     mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
-    mbedtls_ssl_conf_rng(&g_conf, ssl_random_callback, &g_ctr_drbg);
-    mbedtls_ssl_conf_endpoint(&g_conf, MBEDTLS_SSL_IS_CLIENT);
     mbedtls_ssl_conf_read_timeout(&g_conf, SSL_RECV_TIMEOUT);
 
     if ((retval = mbedtls_ssl_setup(&g_ssl, &g_conf)) != 0) {
@@ -212,7 +213,14 @@ static void ssl_client_task(void *arg)
         return;
     }
 
-    retval = socket(SOCKET_SSL, Sn_MR_TCP, PORT_SSL, SF_TCP_NODELAY);
+    /* SF_FORCE_ARP (W6300): forces an ARP request before TCP CONNECT so the
+     * chip resolves the destination MAC. Without it the W6300 sends SYN to a
+     * null MAC when the ARP cache is empty, which is silently dropped. */
+#if _WIZCHIP_ > W5500
+    retval = socket(SOCKET_SSL, Sn_MR_TCP, PORT_SSL_SRC, SF_TCP_NODELAY | SF_FORCE_ARP);
+#else
+    retval = socket(SOCKET_SSL, Sn_MR_TCP, PORT_SSL_SRC, SF_TCP_NODELAY);
+#endif
     if (retval != SOCKET_SSL) {
         printf(" Socket failed %d\n", (int)retval);
         vTaskDelete(NULL);
@@ -222,6 +230,30 @@ static void ssl_client_task(void *arg)
     printf(" Connecting to %d.%d.%d.%d:%d\n",
            g_ssl_target_ip[0], g_ssl_target_ip[1], g_ssl_target_ip[2], g_ssl_target_ip[3], PORT_SSL);
 
+#if _WIZCHIP_ > W5500
+    /* Use manual CONNECT for W6300: the library connect() variadic macro
+     * routes 3-arg calls to connect_W5x00(), and connect_W6x00() interacts
+     * badly with SF_FORCE_ARP in sock_io_mode. Direct register writes are
+     * cleaner and match what connect_IO_6 does internally. */
+    setSn_DPORTR(SOCKET_SSL, PORT_SSL);
+    setSn_DIPR(SOCKET_SSL, g_ssl_target_ip);
+    setSn_CR(SOCKET_SSL, Sn_CR_CONNECT);
+    while (getSn_CR(SOCKET_SSL));
+
+    retval = SOCKERR_TIMEOUT;
+    start_ms = millis();
+    while ((millis() - start_ms) < (uint32_t)SSL_RECV_TIMEOUT) {
+        uint8_t sr = getSn_SR(SOCKET_SSL);
+        if (sr == SOCK_ESTABLISHED) { retval = SOCK_OK; break; }
+        if (getSn_IR(SOCKET_SSL) & Sn_IR_TIMEOUT) {
+            setSn_IR(SOCKET_SSL, Sn_IR_TIMEOUT);
+            retval = SOCKERR_TIMEOUT;
+            break;
+        }
+        if (sr == SOCK_CLOSED) { retval = SOCKERR_SOCKCLOSED; break; }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+#else
     start_ms = millis();
     do {
         retval = connect(SOCKET_SSL, g_ssl_target_ip, PORT_SSL);
@@ -230,6 +262,7 @@ static void ssl_client_task(void *arg)
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     } while ((millis() - start_ms) < SSL_RECV_TIMEOUT);
+#endif
 
     if (retval != SOCK_OK) {
         printf(" Connect failed %d\n", (int)retval);
@@ -271,11 +304,5 @@ static void ssl_client_task(void *arg)
 
 void app_main(void)
 {
-    // Sockets are opened in blocking mode; disable Task WDT to avoid resets
-    // during long waits and manual network testing.
-    esp_task_wdt_delete(NULL);
-    esp_task_wdt_deinit();
-
-    // TLS needs a larger stack than the other demos.
     xTaskCreate(ssl_client_task, "ssl_client_task", 16384, NULL, 5, NULL);
 }

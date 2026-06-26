@@ -28,7 +28,7 @@
 #define TFTP_CLIENT_SOCKET_BUFFER_SIZE 2048
 
 /* TFTP server: change to your environment */
-#define TFTP_SERVER_IP "192.168.11.100"
+#define TFTP_SERVER_IP "192.168.11.4"
 #define TFTP_SERVER_FILE_NAME "tftp_test_file.txt"
 
 #ifdef CONFIG_ESP_WIZ_TOE_TX_BUF_KB
@@ -101,6 +101,21 @@ static void wizchip_port_initialize(void)
     wizchip_setnetinfo((wiz_NetInfo *)&g_net_info);
 
     printf("ip: %d.%d.%d.%d\n", g_net_info.ip[0], g_net_info.ip[1], g_net_info.ip[2], g_net_info.ip[3]);
+#if _WIZCHIP_ > W5500
+    {
+        uint8_t physr;
+        uint32_t waited = 0;
+        do {
+            physr = getPHYSR();
+            if (physr & PHYSR_LNK) break;
+            vTaskDelay(pdMS_TO_TICKS(100));
+            waited += 100;
+        } while (waited < 3000);
+        if (!(physr & PHYSR_LNK)) {
+            printf("PHY link down after 3 s — check cable\n");
+        }
+    }
+#endif
 }
 
 /* 1-second tick for the TFTP retransmission timer */
