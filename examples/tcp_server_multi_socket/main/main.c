@@ -123,6 +123,7 @@ static int32_t loopback_tcps_multi_socket(uint8_t *buf, uint16_t port)
     uint16_t size = 0, sentsize = 0;
     uint8_t destip[4];
     uint16_t destport;
+    uint16_t multi_socket_port = port + sn;
 
     switch (getSn_SR(sn)) {
     case SOCK_ESTABLISHED:
@@ -164,12 +165,13 @@ static int32_t loopback_tcps_multi_socket(uint8_t *buf, uint16_t port)
         }
         break;
     case SOCK_INIT:
+        printf("%d:Listen, TCP server loopback, port [%d]\r\n", sn, multi_socket_port);
         if ((ret = listen(sn)) != SOCK_OK) {
             return ret;
         }
         break;
     case SOCK_CLOSED:
-        if ((ret = socket(sn, Sn_MR_TCP, port, Sn_MR_ND)) != sn) {
+        if ((ret = socket(sn, Sn_MR_TCP, multi_socket_port, Sn_MR_ND)) != sn) {
             return ret;
         }
         break;
@@ -190,7 +192,7 @@ static void multi_socket_task(void *arg)
 
     wizchip_port_initialize();
 
-    printf("TCP multi-socket server on port %d (%d sockets)\n", PORT_TCP_SERVER, _WIZCHIP_SOCK_NUM_);
+    printf("TCP multi-socket server on ports %d-%d (%d sockets)\n", PORT_TCP_SERVER, PORT_TCP_SERVER + _WIZCHIP_SOCK_NUM_ - 1, _WIZCHIP_SOCK_NUM_);
 
     /* Infinite loop */
     while (1) {
