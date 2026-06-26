@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include "hyperterminal.h"
-#include "socket.h"
+typedef uint8_t SOCKET;
 signed char SSDPProcess(SOCKET sockfd);			/**< This function processes the SSDP message. */
 signed char GetDescriptionProcess(SOCKET sockfd);	/**< This function gets the description message from IGD(Internet Gateway Device). */
 signed char SetEventing(SOCKET sockfd);			/**< This function subscribes to the eventing message from IGD(Internet Gateway Device). */

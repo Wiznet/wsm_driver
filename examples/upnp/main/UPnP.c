@@ -1,7 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "socket.h"
+#include "esp_wiz_toe/Ethernet/socket.h"
 #include "wizchip_conf.h"
 #include "UPnP.h"
 #include "MakeXML.h"

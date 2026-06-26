@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "socket.h"
+#include "esp_wiz_toe/Ethernet/socket.h"
 #include "wizchip_conf.h"
 #include "hyperterminal.h"
 #include "UPnP.h"
@@ -11,7 +11,6 @@
 #include "pico/time.h"
 #include "loopback.h"
 #include "pico/stdlib.h"
-#include "wizchip_spi.h"
 //#include "bsp_spi.h"
 
 
@@ -285,6 +284,14 @@ char *STRTOK(char *strToken, const char *strDelimit)
  * Output         : None
  * Return         : None
  *******************************************************************************/
+static void print_network_information(wiz_NetInfo info)
+{
+    printf(" IP  : %d.%d.%d.%d\r\n", info.ip[0], info.ip[1], info.ip[2], info.ip[3]);
+    printf(" SN  : %d.%d.%d.%d\r\n", info.sn[0], info.sn[1], info.sn[2], info.sn[3]);
+    printf(" GW  : %d.%d.%d.%d\r\n", info.gw[0], info.gw[1], info.gw[2], info.gw[3]);
+    printf(" DNS : %d.%d.%d.%d\r\n", info.dns[0], info.dns[1], info.dns[2], info.dns[3]);
+}
+
 void Main_Menu(uint8_t sn, uint8_t sn2, uint8_t sn3, uint8_t *buf, uint16_t tcps_port, uint16_t udps_port)
 {
     static char choice[3];
