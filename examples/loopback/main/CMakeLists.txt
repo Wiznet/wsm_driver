@@ -5,6 +5,8 @@ idf_component_register(
         "."
     REQUIRES
         esp_wiz_toe
+        esp_driver_rmt
+
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
