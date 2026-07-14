@@ -13,6 +13,8 @@
 #include <string.h>
 #include <math.h>
 
+#include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "esp_wiz_toe.h"
 #include "esp_wiz_toe/Ethernet/socket.h"
 #include "freertos/FreeRTOS.h"
