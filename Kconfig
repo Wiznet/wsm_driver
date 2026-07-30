@@ -31,6 +31,36 @@ config ESP_WIZ_TOE_CHIP_W6300
 endchoice
 
 # =============================================================================
+# Network backend selection
+# =============================================================================
+# TOE and ETH each define wiznet_net_init()/wiznet_net_is_up(), so they are
+# mutually exclusive at link time — pick exactly one here.
+choice ESP_WIZ_TOE_BACKEND
+    prompt "Network backend"
+    default ESP_WIZ_TOE_BACKEND_TOE
+    help
+        TOE = WIZnet hardware TCP/IP via the ioLibrary (W5500 or W6300).
+        ETH = the chip as a SPI Ethernet MAC (esp_eth MACRAW) + software LwIP.
+
+config ESP_WIZ_TOE_BACKEND_TOE
+    bool "TOE (hardware TCP/IP)"
+
+config ESP_WIZ_TOE_BACKEND_ETH
+    bool "esp_eth MACRAW + software LwIP"
+    help
+        Runs the chip as a dumb Ethernet MAC (MACRAW on hardware socket 0) and
+        lets the ESP32-S3's software LwIP own the TCP/IP stack, so the full BSD
+        socket API (select/poll, non-blocking, TLS, IPv6, unlimited sockets) is
+        available instead of the chip's 8 hardware sockets.
+
+        Each chip has its own esp_eth MAC/PHY pair, selected automatically:
+          W5500 -> esp_eth_mac_w5500.c / esp_eth_phy_w5500.c (SPI VDM framing)
+          W6300 -> esp_eth_mac_w6300.c / esp_eth_phy_w6300.c (QSPI framing,
+                   single or quad per the W6300 QSPI mode option below)
+
+endchoice
+
+# =============================================================================
 # W6300 QSPI mode
 # =============================================================================
 choice ESP_WIZ_TOE_QSPI_MODE
@@ -58,6 +88,31 @@ config ESP_WIZ_TOE_TX_BUF_KB
     int "Per-socket TX buffer size (KB)"
     range 1 16
     default 2
+
+# =============================================================================
+# BSD socket integration (--wrap): route lwIP sockets to the TOE hardware sockets
+# =============================================================================
+config ESP_WIZ_TOE_SOCKET_WRAP
+    bool 
+    depends on ESP_WIZ_TOE_BACKEND_TOE
+    default y
+    help
+        When enabled, lwIP's BSD socket entry points (socket/bind/listen/
+        accept/connect/send/recv/close/...) are redirected at link time to the
+        WIZnet chip's hardware TCP/IP sockets. Standard socket code then runs
+        over the TOE with no source changes.
+
+        This builds the extra TOE port sources (wiznet_toe.c, wiztoe_wrap.c),
+        renames ioLibrary's close() to wiz_close() so it no longer hijacks POSIX
+        close(), and adds the -Wl,--wrap=lwip_* linker flags.
+
+        Follows the backend choice by default: TOE -> enabled (BSD sockets run
+        on the chip), ETH -> not applicable (plain lwIP over esp_eth).
+
+        Turn this OFF for apps that call the ioLibrary socket API directly
+        (socket(sn, Sn_MR_TCP, ...) / close(sn)), as the non-loopback examples
+        do — the close() rename above would otherwise send their close(sn) to
+        newlib's POSIX close().
 
 # =============================================================================
 # SPI wiring — derived per chip (no prompt -> hidden, follows chip choice).

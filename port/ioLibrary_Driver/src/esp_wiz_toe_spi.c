@@ -5,8 +5,11 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+
+#include "toe_port.h"   /* neutral yield/time helpers used by wiznet_toe.c */
 
 #if __has_include("wizchip_conf.h")
 #include "wizchip_conf.h"
@@ -25,6 +28,22 @@
 #endif
 
 static const char *TAG = "esp_wiz_toe_spi";
+
+/* Round a sub-tick millisecond delay up to one tick. pdMS_TO_TICKS() truncates,
+ * so at the ESP-IDF default CONFIG_FREERTOS_HZ=100 anything below 10 ms becomes
+ * vTaskDelay(0) -- a bare taskYIELD() that never blocks. In the TOE poll loops
+ * (wiztoe_accept/recv) that starves the lower-priority idle task and trips the
+ * task watchdog, so every delay here must be at least 1 tick regardless of the
+ * tick rate the surrounding project happens to use. */
+#define ESP_WIZ_TOE_DELAY_TICKS(ms) \
+    (pdMS_TO_TICKS(ms) > 0 ? pdMS_TO_TICKS(ms) : (TickType_t)1)
+
+/* ---- neutral port helpers (toe_port.h) ----
+ * Provided here (the TOE SPI transport TU) so wiznet_toe.c stays free of any
+ * FreeRTOS/esp_timer headers. Both TUs are TOE-only, so these are always linked
+ * exactly when needed and never pulled into the esp_eth backend. */
+void toe_yield_1ms(void)   { vTaskDelay(ESP_WIZ_TOE_DELAY_TICKS(1)); }
+uint32_t toe_time_us(void) { return (uint32_t)esp_timer_get_time(); }
 
 #ifdef CONFIG_ESP_WIZ_TOE_SPI_HOST
 #define ESP_WIZ_TOE_DEF_SPI_HOST ((spi_host_device_t)CONFIG_ESP_WIZ_TOE_SPI_HOST)
@@ -310,6 +329,7 @@ static void wizchip_qspi_xfer(uint8_t opcode, uint16_t addr, const uint8_t *tx, 
 
 static void wizchip_qspi_read(uint8_t opcode, uint16_t addr, uint8_t *buf, uint16_t len)
 {
+    
     wizchip_qspi_xfer(opcode, addr, NULL, buf, len);
 }
 
@@ -478,9 +498,9 @@ esp_err_t esp_wiz_toe_spi_reset(void)
     }
 
     gpio_set_level(s_ctx.cfg.pin_rst, 0);
-    vTaskDelay(pdMS_TO_TICKS(2));
+    vTaskDelay(ESP_WIZ_TOE_DELAY_TICKS(2));
     gpio_set_level(s_ctx.cfg.pin_rst, 1);
-    vTaskDelay(pdMS_TO_TICKS(150));
+    vTaskDelay(ESP_WIZ_TOE_DELAY_TICKS(150));
 
     return ESP_OK;
 }

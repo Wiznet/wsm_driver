@@ -38,6 +38,35 @@ ESP32-S3 SPI master in half-duplex mode.
 
 Select the chip in menuconfig: `Component config -> WIZnet TOE Component -> WIZnet chip -> W6300`.
 
+## Network backend
+
+`Component config -> WIZnet TOE Component -> Network backend` picks who owns the
+TCP/IP stack. Both options work with either chip.
+
+- **TOE (hardware TCP/IP)** — the chip runs the stack (ioLibrary). Apps either
+  call the ioLibrary socket API directly, or enable
+  `Route BSD sockets to the WIZnet TOE hardware sockets (--wrap)` to drive the
+  chip's 8 hardware sockets through standard BSD socket calls. IPv4 TCP/UDP only;
+  no `select`/`poll`.
+- **esp_eth MACRAW + software LwIP** — the chip is a plain Ethernet MAC
+  (MACRAW on hardware socket 0) and the ESP32-S3's LwIP owns the stack, so the
+  full socket API is available (`select`/`poll`, non-blocking, TLS, IPv6, no
+  8-socket limit) at the cost of moving every packet across the SPI/QSPI bus.
+
+Each chip has its own esp_eth MAC/PHY pair, selected automatically by the chip
+choice:
+
+| Chip  | MAC / PHY                                | Transport                     |
+|-------|------------------------------------------|-------------------------------|
+| W5500 | `esp_eth_mac_w5500.c` / `esp_eth_phy_w5500.c` | full-duplex SPI, VDM frame |
+| W6300 | `esp_eth_mac_w6300.c` / `esp_eth_phy_w6300.c` | half-duplex QSPI, single or quad |
+
+The W6300 pair is specific to this component. Beyond the different frame format
+it also has to unlock the chip's `CHPLCKR`/`NETLCKR`/`PHYLCKR` register groups
+after every reset (the W6300 boots with them locked, so `SYCR0`, `SHAR` and
+`PHYCR0/1` are otherwise unwritable) and it uses `PHYSR` + `PHYCR0/1` instead of
+the W5500's single `PHYCFGR`, whose speed/duplex bits have the opposite polarity.
+
 ## Public API
 
 Header: `include/esp_wiz_toe.h`
