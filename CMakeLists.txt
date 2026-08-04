@@ -109,7 +109,7 @@ endif()
 
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
     _WIZCHIP_=${ESP_WIZ_TOE_CHIP_NAME}
-    _PHY_IO_MODE_=_PHY_IO_MODE_PHYCR_
+    # _PHY_IO_MODE_=_PHY_IO_MODE_PHYCR_
 )
 
 if(CONFIG_ESP_WIZ_TOE_CHIP_W5500)
