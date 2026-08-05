@@ -63,26 +63,65 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/udp_multicast/main/main.c` file.
+Network identity, the group and the ports live in `examples/udp_multicast/inc/net_config.h`, the same way as in `examples/loopback`:
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+
+#define WIFI_SSID             ""      /* empty -> Ethernet only */
+#define WIFI_PASS             ""
+
+#define MCAST_GROUP_IP        "224.0.0.5"
+#define MCAST_GROUP_PORT      30000   /* Ethernet */
+#define WIFI_MCAST_GROUP_PORT 30001   /* Wi-Fi    */
+#define MCAST_BUF_SIZE        2048
+```
+
+`main.c` assembles a `wiz_NetInfo` from these and hands it to `wiznet_net_init()`, which applies it to the chip with `wizchip_setnetinfo()`.
+
+`224.0.0.5` is the OSPF All-SPF-Routers group, the same one the WIZnet-PICO-C example uses. Any address in `224.0.0.0/4` works.
+
+### How the group is joined
+
+The engine asks for membership the ordinary BSD way:
+
+```cpp
+struct ip_mreq mreq = {
+    .imr_multiaddr.s_addr = inet_addr(group),
+    .imr_interface.s_addr = htonl(INADDR_ANY),
 };
+ops->setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 ```
 
-### Multicast configuration
+On Wi-Fi that is plain LwIP IGMP. On the WIZnet chip the component translates it: the chip filters the group **in hardware**, deriving the multicast MAC for `Sn_DHAR` from `Sn_DIPR` at the moment the socket opens. Because the group has to be in the registers *before* the socket opens — and BSD joins *after* `bind()` — the component closes and reopens the hardware socket with `Sn_MR_MULTI` when the join arrives. A join issued before `bind()` is recorded instead, and `bind()` opens with multicast enabled from the start. Either order works, and the example code stays plain BSD.
 
-The device acts as a multicast **receiver**: it joins the multicast group on socket 0 and prints any datagram sent to that group. Set the multicast group address and port in `examples/udp_multicast/main/main.c`. By default the device joins `224.0.0.5` on port `30000`.
+`struct ip_mreq` carries no port, so the group port is the port you bound — which is exactly what binding to a group's port means in BSD.
+
+### Architecture
+
+Same layout as `examples/loopback`:
+
+| Path | Role |
+|------|------|
+| `inc/net_config.h` | network identity, group, ports, buffer size |
+| `inc/mcast_rx.h` | engine API |
+| `src/mcast_rx.c` | backend-neutral receiver (BSD sockets via a vtable) |
+| `main/main.c` | orchestration only: bring interfaces up, start the tasks |
+
+### Running on Wi-Fi at the same time (optional)
+
+Fill in `WIFI_SSID` and the same receiver also comes up on a Wi-Fi STA:
 
 ```cpp
-static uint8_t  g_multicast_ip[4] = {224, 0, 0, 5}; // multicast ip address
-static uint16_t g_multicast_port  = 30000;          // multicast port
+mcast_rx_start("eth",  &net_eth_ops,  MCAST_GROUP_IP, MCAST_GROUP_PORT,      wiznet_net_is_up);
+mcast_rx_start("wifi", &net_wifi_ops, MCAST_GROUP_IP, WIFI_MCAST_GROUP_PORT, wifi_net_is_up);
 ```
+
+The two use different ports because with `SOCKET_WRAP=0` (esp_eth backend) they share one LwIP stack, where the same port would clash on bind. Leave `WIFI_SSID` empty when committing.
 
 ## Step 4: Build
 
@@ -111,8 +150,16 @@ idf.py -p /dev/ttyUSB0 flash monitor
 If flashing succeeds, the assigned IP and the joined multicast group appear in the terminal.
 
 ```
-ip: 192.168.11.2
-multicast group 224.0.0.5:30000
+I (522) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (525) mcast_rx: [eth] waiting for link...
+I (528) mcast_rx: [eth] listening to 224.0.0.5:30000
+```
+
+With Wi-Fi configured, the second receiver appears once DHCP has assigned an address:
+
+```
+I (xxxxx) wifi: got IP 192.168.11.7
+I (xxxxx) mcast_rx: [wifi] listening to 224.0.0.5:30001
 ```
 
 ![][link-run_socket_open]
@@ -121,11 +168,48 @@ Open Hercules and select the **UDP** tab. Set the module IP to the multicast gro
 ![][link-run_hercules]
 
 Send any data from Hercules to the multicast group. The device receives the datagram and prints it in the serial monitor, confirming multicast reception works.
+
+```
+I (xxxxx) mcast_rx: [eth] 5 bytes from 192.168.11.4: hello
+```
+
 ![][link-run_multicast]
+
+To check that the hardware filter really is filtering, send to a *different* group (say `224.0.0.9`) on the same port — the device should stay silent.
+
+### If nothing arrives: check which adapter Windows sends multicast on
+
+Multicast has no destination host to route toward, so Windows picks the egress adapter purely by interface metric — and a VirtualBox, VMware, WSL or Hyper-V virtual adapter usually has a *lower* metric than your real NIC, which silently wins. Hercules has no way to choose the interface, so the datagram leaves on the virtual adapter and the device never sees it. The device is fine; the packet never reached the wire.
+
+Check the ordering:
+
+```powershell
+Get-NetRoute -DestinationPrefix '224.0.0.0/4' |
+    Select-Object InterfaceAlias, InterfaceMetric | Sort-Object InterfaceMetric
+```
+
+If your Ethernet is not first, give it a lower metric (needs an elevated shell):
+
+```powershell
+Set-NetIPInterface -InterfaceIndex <your-ethernet-index> -InterfaceMetric 5
+# undo later with: Set-NetIPInterface -InterfaceIndex <idx> -AutomaticMetric Enabled
+```
+
+To sidestep the whole issue, send from PowerShell instead — binding the socket to the wired address forces the interface:
+
+```powershell
+$local = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse("192.168.11.4"), 0)
+$c = New-Object System.Net.Sockets.UdpClient($local)
+$b = [System.Text.Encoding]::ASCII.GetBytes("hello multicast")
+$c.Send($b, $b.Length, "224.0.0.5", 30000)
+$c.Close()
+```
+
+Wireshark on the wired adapter with the filter `ip.addr == 224.0.0.5` settles it either way: you should see the device's own IGMPv2 Membership Reports (proof the chip joined) alongside your outgoing datagrams.
 
 ## Appendix
 
-- **Multicast group and IGMP:** The device joins group `224.0.0.5:30000` on socket 0 using the ioLibrary `multicast` helper. Any host on the same network that sends to this group:port will be received; multiple receivers can join the same group simultaneously.
+- **Multicast group and IGMP:** Any host on the same network that sends to this group:port is received, and multiple receivers can join the same group at once. On the WIZnet chip the filtering happens in hardware, so multicast traffic for other groups never wakes the MCU. On the Wi-Fi side LwIP does the filtering and sends IGMP membership reports, which needs `CONFIG_LWIP_IGMP=y` (pinned in `sdkconfig.defaults`).
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->

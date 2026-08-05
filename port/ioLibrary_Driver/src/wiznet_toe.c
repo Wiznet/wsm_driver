@@ -40,6 +40,9 @@ typedef struct {
     uint8_t  dst_ip[4];
     uint16_t dst_port;
     uint8_t  connected;
+    uint8_t  mcast;            /* joined a multicast group  */
+    uint8_t  mcast_ip[4];      /* group address             */
+    uint16_t mcast_port;       /* group port == bound port  */
 } toe_sock_t;
 
 static toe_sock_t g_toe[WIZTOE_MAX_SOCK];
@@ -52,6 +55,46 @@ static int toe_fd_valid(int fd)
 static uint8_t toe_open_flag(int fd)
 {
     return g_toe[fd].nodelay ? SF_TCP_NODELAY : 0;
+}
+
+/* Open the hardware socket for a UDP fd.
+ *
+ * Multicast is the reason this is a function rather than an inline socket()
+ * call: the chip derives the multicast MAC for Sn_DHAR from Sn_DIPR when the
+ * socket is opened, so the group address and port must already be in the
+ * registers by then, and Sn_MR_MULTI must be part of the open flag. Every path
+ * that opens a UDP socket therefore goes through here. With no group joined
+ * this is exactly the plain unicast open it replaces. */
+static int toe_open_udp(int fd)
+{
+    uint8_t flag = 0;
+
+    if (g_toe[fd].mcast)
+    {
+        /* Multicast MAC for an IPv4 group: 01:00:5E plus the low 23 bits of the
+         * group address (RFC 1112). */
+        uint8_t mac[6] = {
+            0x01, 0x00, 0x5E,
+            (uint8_t)(g_toe[fd].mcast_ip[1] & 0x7F),
+            g_toe[fd].mcast_ip[2],
+            g_toe[fd].mcast_ip[3],
+        };
+        setSn_DHAR((uint8_t)fd, mac);
+        setSn_DIPR((uint8_t)fd, g_toe[fd].mcast_ip);
+        setSn_DPORT((uint8_t)fd, g_toe[fd].mcast_port);
+
+        /* Multicast belongs in the FLAG argument, not the protocol argument:
+         * socket() validates it there (see ioLibrary socket.c, Sn_MR_UDP case),
+         * and OR-ing it into the protocol yields 0x82, which matches no
+         * protocol case at all. */
+        flag = SF_MULTI_ENABLE;
+    }
+
+    if (socket((uint8_t)fd, Sn_MR_UDP, g_toe[fd].port, flag) != fd)
+        return -1;
+
+    g_toe[fd].opened = 1;
+    return 0;
 }
 
 void wiztoe_network_init(const uint8_t ip[4], const uint8_t mask[4],
@@ -108,12 +151,16 @@ int wiztoe_bind(int fd, uint16_t port)
 
     if (g_toe[fd].is_udp)
     {
-        if (socket((uint8_t)fd, Sn_MR_UDP, port, 0) != fd)
+        /* A join that arrived before bind() is applied here, so the socket is
+         * opened with Sn_MR_MULTI from the start and never has to be reopened. */
+        if (g_toe[fd].mcast)
+            g_toe[fd].mcast_port = port;
+        if (toe_open_udp(fd) < 0)
             return -1;
-        g_toe[fd].opened = 1;
     }
     return 0;
 }
+
 
 int wiztoe_listen(int fd, int backlog)
 {
@@ -279,28 +326,45 @@ int wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *port
 
 int wiztoe_udp_open_multicast(int fd, const uint8_t group[4], uint16_t port)
 {
+    if (!toe_fd_valid(fd) || !g_toe[fd].is_udp || group == NULL)
+        return -1;
+
+    memcpy(g_toe[fd].mcast_ip, group, 4);
+    g_toe[fd].mcast_port = port;
+    g_toe[fd].mcast = 1;
+    g_toe[fd].port = port;
+
+    /* Joining before bind() just records the group: bind() then opens with
+     * multicast enabled from the start and nothing has to be reopened. */
+    if (!g_toe[fd].opened)
+        return 0;
+
+    /* Already open as plain unicast. A group cannot be added to a live socket
+     * -- the chip latches the multicast MAC when the socket opens -- so close
+     * and reopen. Datagrams arriving in that gap are lost, which is acceptable
+     * because a join happens once at start-up, before any traffic is expected. */
+    close((uint8_t)fd);
+    g_toe[fd].opened = 0;
+    return toe_open_udp(fd);
+}
+
+int wiztoe_udp_leave_multicast(int fd)
+{
     if (!toe_fd_valid(fd) || !g_toe[fd].is_udp)
         return -1;
+    if (!g_toe[fd].mcast)
+        return 0;
 
-    uint8_t mac[6];
-    mac[0] = 0x01; mac[1] = 0x00; mac[2] = 0x5E;
-    mac[3] = group[1] & 0x7F;
-    mac[4] = group[2];
-    mac[5] = group[3];
+    g_toe[fd].mcast = 0;
+    memset(g_toe[fd].mcast_ip, 0, sizeof(g_toe[fd].mcast_ip));
+    g_toe[fd].mcast_port = 0;
 
-    if (g_toe[fd].opened)
-        close((uint8_t)fd);
+    if (!g_toe[fd].opened)
+        return 0;
 
-    setSn_DHAR((uint8_t)fd, mac);
-    setSn_DIPR((uint8_t)fd, (uint8_t *)group);
-    setSn_DPORT((uint8_t)fd, port);
-
-    if (socket((uint8_t)fd, Sn_MR_UDP | SF_MULTI_ENABLE, port, 0) != fd)
-        return -1;
-
-    g_toe[fd].opened = 1;
-    g_toe[fd].port = port;
-    return 0;
+    close((uint8_t)fd);
+    g_toe[fd].opened = 0;
+    return toe_open_udp(fd);
 }
 
 void wiztoe_peer(int fd, uint8_t ip[4], uint16_t *port)
