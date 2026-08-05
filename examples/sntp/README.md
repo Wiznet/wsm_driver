@@ -62,36 +62,44 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/sntp/main/main.c` file. The gateway and DNS must point to a working internet route so the device can reach the SNTP server.
+All example settings live in `examples/sntp/inc/net_config.h`. The SPI wiring is **not** here — it comes from the component Kconfig shown above. The gateway must point to a working internet route so the device can reach the SNTP server.
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR    {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}  // MAC address
+#define NET_IP_ADDR     {192, 168, 11, 2}                     // IP address
+#define NET_SUBNET_MASK {255, 255, 255, 0}                    // Subnet Mask
+#define NET_GATEWAY     {192, 168, 11, 1}                     // Gateway
+#define NET_DNS_ADDR    {8, 8, 8, 8}                          // DNS server
 ```
+
+### Wi-Fi configuration
+
+This example queries the time **over the WIZnet chip and over Wi-Fi at the same time**, so fill in your AP credentials in the same file:
+
+```cpp
+#define WIFI_SSID "your-ssid"
+#define WIFI_PASS "your-password"
+```
+
+Leaving the placeholders in place is harmless: the Wi-Fi query simply fails after its retries and the Ethernet one is unaffected.
 
 ### SNTP configuration
 
-The SNTP server, timezone, and socket are set in `examples/sntp/main/main.c`. By default the device queries `time.google.com` (`216.239.35.0`) using socket 0, with the timezone set to Korea (`TIMEZONE 40`).
+The server, local ports and timezone are in the same `net_config.h`. By default the device queries `time.google.com` (`216.239.35.0`) with the offset set to Korea (UTC+9).
 
 ```cpp
-/* Socket */
-#define SOCKET_SNTP 0
+#define SNTP_SERVER_IP        "216.239.35.0"   // time.google.com
+#define SNTP_SERVER_PORT      123
+#define SNTP_LOCAL_PORT       5000             // Ethernet local UDP port
+#define WIFI_SNTP_LOCAL_PORT  5001             // Wi-Fi local UDP port
 
-/* Timeout */
-#define RECV_TIMEOUT (1000 * 10) // 10 seconds
+#define SNTP_TIMEOUT_MS       (1000 * 10)      // per attempt
+#define SNTP_RETRY_COUNT      3
 
-/* Timezone */
-#define TIMEZONE 40 // Korea
-
-static uint8_t g_sntp_server_ip[4] = {216, 239, 35, 0}; // time.google.com
+#define SNTP_TZ_OFFSET_MIN    (9 * 60)         // UTC+9 (Korea)
 ```
 
-To query a different server or set a different timezone, change `g_sntp_server_ip` and the `TIMEZONE` value.
+The server is given as an IPv4 literal — this client does no name resolution, so DNS is not a second thing that can fail during bring-up. `SNTP_TZ_OFFSET_MIN` is plain minutes: use `(-5 * 60)` for UTC-5, `(5 * 60 + 30)` for UTC+5:30, and so on. (The original example used ioLibrary's `TIMEZONE` index code instead; `40` there meant UTC+9.)
 
 ## Step 4: Build
 
@@ -120,15 +128,18 @@ idf.py -p /dev/ttyUSB0 flash monitor
 If flashing succeeds, the assigned IP appears in the terminal.
 
 ```
-ip: 192.168.11.2
+wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
 ```
 
 ![][link-run_socket_open]
 
-The device then queries the SNTP server and prints the current date and time in the serial monitor in `yy-mo-dd, hh:mm:ss` format (the timezone offset from `TIMEZONE` is already applied).
+Each interface then queries the server and prints the current date and time, with `SNTP_TZ_OFFSET_MIN` already applied. The two lines should agree.
 
 ```
- 2026-6-23, 14:5:30
+sntp: [eth] querying 216.239.35.0 (attempt 1/3)
+sntp: [eth] 2026-06-23 14:05:30 (UTC+9:00)
+sntp: [wifi] querying 216.239.35.0 (attempt 1/3)
+sntp: [wifi] 2026-06-23 14:05:31 (UTC+9:00)
 ```
 
 ![][link-run_time]
@@ -137,8 +148,11 @@ No separate PC tool is needed — the result is verified entirely in the serial 
 
 ## Appendix
 
-- **SNTP failed:** If `SNTP failed : 0` is printed, the device could not reach the server within the 10-second timeout (`RECV_TIMEOUT`). Check that the Ethernet cable is connected and that the gateway and DNS in `g_net_info` provide a valid internet route.
-- **Timezone:** `TIMEZONE` is a half-hour-step offset code from the WIZnet SNTP library; `40` corresponds to Korea (UTC+9). Adjust it for your region.
+- **SNTP failed:** If `SNTP failed after 3 attempts` is printed, the device could not reach the server within `SNTP_TIMEOUT_MS` per attempt. Check the cable and that `NET_GATEWAY` provides a valid internet route (for the `[wifi]` line, that your AP does).
+- **Timezone:** `SNTP_TZ_OFFSET_MIN` is a plain minute offset applied to the UTC the server returns. Adjust it for your region.
+- **How one client drives two interfaces:** the query in `src/sntp_client.c` calls BSD sockets through a vtable. For Ethernet that vtable is the plain `lwip_*` set, which the `esp_wiz_toe` component redirects to the chip's hardware sockets at link time (`-Wl,--wrap`, `CONFIG_ESP_WIZ_TOE_SOCKET_WRAP`); for Wi-Fi it is the un-wrapped `__real_lwip_*` set in `src/wifi_sntp.c`, which reaches the software LwIP stack. The application code is identical for both.
+- **Why not ioLibrary's `SNTP_run()`:** that implementation drives a hardware socket number directly, so it never passes through the BSD socket layer the wrap intercepts and cannot run on Wi-Fi at all. The NTP exchange is one 48-byte datagram each way, so this example does it over plain BSD UDP instead. It also keeps ioLibrary's `sntp.h` out of the include path, where it collides with lwIP's header of the same name.
+- **Ethernet only:** remove the `sntp_client_start("wifi", ...)` call (and `wifi_net_init`) from `main/main.c`.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->
