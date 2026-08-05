@@ -63,33 +63,41 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/tcp_client_over_ssl/main/main.c` file.
+All example settings live in `examples/tcp_client_over_ssl/inc/net_config.h`. The SPI wiring is **not** here — it comes from the component Kconfig shown above.
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR    {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}  // MAC address
+#define NET_IP_ADDR     {192, 168, 11, 2}                     // IP address
+#define NET_SUBNET_MASK {255, 255, 255, 0}                    // Subnet Mask
+#define NET_GATEWAY     {192, 168, 11, 1}                     // Gateway
+#define NET_DNS_ADDR    {8, 8, 8, 8}                          // DNS server
 ```
+
+### Wi-Fi configuration
+
+This example runs a TLS client **over the WIZnet chip and over Wi-Fi at the same time**, both against the same server, so fill in your AP credentials in the same file:
+
+```cpp
+#define WIFI_SSID "your-ssid"
+#define WIFI_PASS "your-password"
+```
+
+Leaving the placeholders in place is harmless: the Wi-Fi session simply keeps retrying and the Ethernet one is unaffected.
 
 ### SSL server configuration
 
-Set the target SSL server address in `examples/tcp_client_over_ssl/main/main.c`. The device connects to this PC-side SSL server on port 443.
+The target server is in the same `net_config.h`. Make sure it matches the IP of the PC running the OpenSSL test server.
 
 ```cpp
-/* Socket */
-#define SOCKET_SSL 0
+#define SSL_TARGET_IP       "192.168.11.4"
+#define SSL_TARGET_PORT     443
 
-/* Port */
-#define PORT_SSL 443
-
-static uint8_t g_ssl_target_ip[4] = {192, 168, 11, 3};
+#define SSL_RECV_TIMEOUT_MS (1000 * 10)
+#define SSL_RETRY_DELAY_MS  (1000 * 5)   // wait before reconnecting
+#define SSL_HELLO_MSG       " W5x00 TCP over SSL test\n"
 ```
 
-Make sure `g_ssl_target_ip` matches the IP of the PC running the OpenSSL test server.
+Both interfaces connect from ephemeral local ports, so the two sessions never collide. The server will see **two** clients.
 
 ## Step 4: Build
 
@@ -122,13 +130,16 @@ openssl req -x509 -newkey rsa:2048 -keyout server.key -out server.crt -days 365 
 openssl s_server -accept 443 -cert server.crt -key server.key
 ```
 
-When the device boots, the assigned IP and the connection progress appear in the terminal.
+When the device boots, the assigned IP and the connection progress appear in the terminal, once per interface.
 
 ```
-ip: 192.168.11.2
- Connecting to 192.168.11.3:443
- TCP connected, starting TLS handshake
- TLS ok [ Ciphersuite: ... ]
+wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+ssl_client: [eth] connecting to 192.168.11.4:443
+ssl_client: [eth] TCP connected, starting TLS handshake
+ssl_client: [eth] TLS ok [ Ciphersuite: ... ]
+wifi: got IP 192.168.0.42
+ssl_client: [wifi] connecting to 192.168.11.4:443
+ssl_client: [wifi] TLS ok [ Ciphersuite: ... ]
 ```
 
 ![][link-run_socket_open]
@@ -139,11 +150,16 @@ After the TCP socket connects, the device runs the mbedTLS handshake against the
 The `openssl s_server` console shows the incoming connection and receives the test string `W5x00 TCP over SSL test`. Type any text in the `s_server` console to send it back; the device prints whatever the server sends.
 ![][link-run_ssl]
 
+> `openssl s_server` serves **one connection at a time**. With both interfaces enabled you have two clients, so the second one waits and retries every `SSL_RETRY_DELAY_MS` until the first session ends. Run a second `s_server` on another port, or disable one interface (see below), if you want both connected at once.
+
 ## Appendix
 
 - **Certificate verification disabled:** For a dependency-free demo, the client sets `MBEDTLS_SSL_VERIFY_NONE`, so the server certificate is not checked. This lets the handshake succeed against a self-signed OpenSSL certificate. For production, load a CA certificate with `mbedtls_x509_crt_parse`, set `mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED)`, and provide it via `mbedtls_ssl_conf_ca_chain`.
-- **mbedTLS and RNG:** mbedTLS is provided by ESP-IDF. The RNG callback is backed by the ESP hardware RNG via `esp_fill_random`, replacing the weak `rand()` used in the original WIZnet-PICO-C example.
-- **Timeout:** The connect and TLS read operations use a 10 second timeout (`SSL_RECV_TIMEOUT`). If the handshake fails, confirm the server IP/port and that `s_server` is listening before the device boots.
+- **mbedTLS:** provided by ESP-IDF, which also supplies the entropy source, so the example sets no RNG callback of its own (the original WIZnet-PICO-C example had to, and used a weak `rand()`).
+- **How one client drives two interfaces:** the TLS logic in `src/ssl_client.c` calls BSD sockets through a vtable, and mbedTLS's BIO is wired to that vtable. For Ethernet it is the plain `lwip_*` set, which the `esp_wiz_toe` component redirects to the chip's hardware sockets at link time (`-Wl,--wrap`, `CONFIG_ESP_WIZ_TOE_SOCKET_WRAP`); for Wi-Fi it is the un-wrapped `__real_lwip_*` set in `src/wifi_ssl_client.c`. The mbedTLS context and config are per task, since two sessions cannot share one `mbedtls_ssl_context`.
+- **Timeout and reconnect:** TLS reads use `SSL_RECV_TIMEOUT_MS`, implemented with `SO_RCVTIMEO` on the socket (the TOE has no `select()`). After a session ends or fails, the client waits `SSL_RETRY_DELAY_MS` and reconnects. If the handshake never succeeds, confirm the server IP/port and that `s_server` is listening.
+- **W6300 and `SF_FORCE_ARP`:** the original version of this example opened its hardware socket with `SF_FORCE_ARP` and exited on the first failed connect. That flag is not reachable through the BSD socket API, and it is not needed: the `tcp_client` example connects on the same chip with open flags `0`, and recovers from a failed connect by retrying from its `SOCK_CLOSED` state. This client retries the same way, so a lost first SYN costs one `SSL_RETRY_DELAY_MS` rather than the session.
+- **Ethernet only:** remove the `ssl_client_start("wifi", ...)` call (and `wifi_net_init`) from `main/main.c`.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->
