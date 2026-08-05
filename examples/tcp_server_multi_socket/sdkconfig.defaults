@@ -1,11 +1,22 @@
 CONFIG_IDF_TARGET="esp32s3"
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+# 1 ms tick: the TOE poll loops (wiztoe_accept/recv) yield in 1 ms steps and
+# count those steps for SO_RCVTIMEO/SO_SNDTIMEO. At the IDF default of 100 Hz a
+# 1 ms delay truncates to 0 ticks, which busy-waits and starves the idle task.
+CONFIG_FREERTOS_HZ=1000
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # CONFIG_COMPILER_OPTIMIZATION_DEBUG is not set
-# WIZnet chip defaults to W5500; switch to W6300 in menuconfig:
-#   Component config -> WIZnet TOE Component -> WIZnet chip
+# The Wi-Fi server needs one lwIP socket per listener PLUS one per accepted
+# connection (MULTI_SOCKET_COUNT of each), which exceeds the default of 10.
+# The Ethernet side is unaffected: TOE fds come from the chip's 8 hardware
+# sockets and accept() reuses the listener fd.
+CONFIG_LWIP_MAX_SOCKETS=16
 # --- esp_wiz_toe shared settings (copied from loopback) ---
 CONFIG_ESP_WIZ_TOE_ENABLED=y
 CONFIG_ESP_WIZ_TOE_CHIP_W6300=y
+CONFIG_ESP_WIZ_TOE_BACKEND_TOE=y
 # pins/clock/QSPI come from the component Kconfig W6300 defaults
+# Route BSD sockets to the WIZnet TOE hardware sockets (builds wiznet_toe.c /
+# wiztoe_wrap.c and adds the lwIP --wrap glue).
+CONFIG_ESP_WIZ_TOE_SOCKET_WRAP=y

@@ -63,28 +63,38 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/tcp_server_multi_socket/main/main.c` file.
+All example settings live in `examples/tcp_server_multi_socket/inc/net_config.h`. The SPI wiring is **not** here — it comes from the component Kconfig shown above.
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR    {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}  // MAC address
+#define NET_IP_ADDR     {192, 168, 11, 2}                     // IP address
+#define NET_SUBNET_MASK {255, 255, 255, 0}                    // Subnet Mask
+#define NET_GATEWAY     {192, 168, 11, 1}                     // Gateway
+#define NET_DNS_ADDR    {8, 8, 8, 8}                          // DNS server
 ```
+
+### Wi-Fi configuration
+
+This example runs the **same echo server on the WIZnet chip and on Wi-Fi at the same time**, so fill in your AP credentials in the same file:
+
+```cpp
+#define WIFI_SSID "your-ssid"
+#define WIFI_PASS "your-password"
+```
+
+Leaving the placeholders in place is harmless: the Wi-Fi side simply keeps retrying the connection and the Ethernet side is unaffected.
 
 ### Server port configuration
 
-Each hardware socket listens on its own TCP port: `PORT_TCP_SERVER + socket number`. With the base port set to 5000 and 8 sockets, the device listens on ports **5000, 5001, … 5007** — one per socket. The base port is set in `examples/tcp_server_multi_socket/main/main.c`.
+Each listener binds its own TCP port, `PORT_BASE + index`. The WIZnet chip cannot have several hardware sockets listening on the same port, so the listeners are spread across consecutive ports — this matches the original WIZnet-PICO-C example.
 
 ```cpp
-/* Port */
-#define PORT_TCP_SERVER 5000
+#define MULTI_SOCKET_PORT_BASE      5000   // Ethernet: 5000..5007
+#define WIFI_MULTI_SOCKET_PORT_BASE 5100   // Wi-Fi:    5100..5107
+#define MULTI_SOCKET_COUNT          8
 ```
 
-The socket count is chip-dependent (`_WIZCHIP_SOCK_NUM_`): both the W5500 and the W6300 provide 8 sockets, and the example opens one listening socket per port (5000..5007) automatically. Clients connect to a different port (5000, 5001, …) for each simultaneous connection.
+`MULTI_SOCKET_COUNT` is 8 to match the chip's 8 hardware sockets. Each listener costs one task on **both** interfaces, so lower it if you are short on RAM. The Wi-Fi side needs one lwIP socket per listener plus one per accepted connection, which is why `sdkconfig.defaults` raises `CONFIG_LWIP_MAX_SOCKETS` to 16.
 
 ## Step 4: Build
 
@@ -110,11 +120,16 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-If flashing succeeds, the assigned IP and the multi-socket server startup log appear in the terminal.
+If flashing succeeds, the assigned IP and the multi-socket server startup log appear in the terminal. Both interfaces come up independently, so the Wi-Fi lines may appear after the Ethernet ones.
 
 ```
-ip: 192.168.11.2
-TCP multi-socket server on ports 5000-5007 (8 sockets)
+wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+multi_socket: [eth] waiting for link...
+multi_socket: [eth#0] listening on port 5000
+multi_socket: [eth#1] listening on port 5001
+multi_socket: [eth] 8/8 listeners up on ports 5000-5007
+wifi: got IP 192.168.0.42
+multi_socket: [wifi] 8/8 listeners up on ports 5100-5107
 ```
 
 ![][link-run_socket_open]
@@ -122,18 +137,20 @@ TCP multi-socket server on ports 5000-5007 (8 sockets)
 Open Hercules, select the **TCP Client** tab, enter the device IP `192.168.11.2` and port `5000`, then connect. Open several Hercules windows (or several TCP Client tabs) and connect each one to a **different port** (`5000`, `5001`, `5002`, …) at the same IP to use multiple sockets at once.
 ![][link-run_hercules]
 
-As each client connects, the device prints the socket number and peer address, for example:
+To test the Wi-Fi side as well, use the IP the `wifi: got IP` line reported and ports `5100`, `5101`, … instead.
+
+As each client connects, the device prints the interface, listener index and peer address, for example:
 
 ```
-0:Connected - 192.168.11.100 : 50312
-1:Connected - 192.168.11.101 : 50315
+multi_socket: [eth#0] connected - 192.168.11.100:50312
+multi_socket: [eth#1] connected - 192.168.11.101:50315
 ```
 
-Send data from each connected Hercules window. The device echoes the same data back to the sender independently, and logs the socket, peer, and message:
+Send data from each connected Hercules window. The device echoes the same data back to the sender independently, and logs the listener, port and message:
 
 ```
-socket0 from:192.168.11.100 port: 50312  message:hello
-socket1 from:192.168.11.101 port: 50315  message:world
+multi_socket: [eth#0] port 5000 message:hello
+multi_socket: [eth#1] port 5001 message:world
 ```
 
 ![][link-run_loopback]
@@ -142,7 +159,9 @@ Confirm that every connection echoes its own data back without interfering with 
 
 ## Appendix
 
-- **Number of simultaneous clients:** The device serves as many connections as the chip has hardware sockets (`_WIZCHIP_SOCK_NUM_`). Each socket is serviced in round-robin from a single task, so all open connections are handled together.
+- **Number of simultaneous clients:** On Ethernet the device serves as many connections as the chip has hardware sockets (8). Each listener runs in its own task and blocks in `accept()`/`recv()`, so the connections do not interfere with each other. The Wi-Fi side serves the same number over the ESP32-S3's own LwIP stack.
+- **How one server drives two interfaces:** the echo logic in `src/multi_socket.c` calls BSD sockets through a vtable. For Ethernet that vtable is the plain `lwip_*` set, which the `esp_wiz_toe` component redirects to the chip's hardware sockets at link time (`-Wl,--wrap`, `CONFIG_ESP_WIZ_TOE_SOCKET_WRAP`); for Wi-Fi it is the un-wrapped `__real_lwip_*` set in `src/wifi_multi_socket.c`, which reaches the software LwIP stack. The application code is identical for both.
+- **Ethernet only:** remove the `multi_socket_start("wifi", ...)` call (and `wifi_net_init`) from `main/main.c`.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->
