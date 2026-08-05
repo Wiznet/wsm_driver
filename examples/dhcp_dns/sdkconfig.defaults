@@ -8,4 +8,8 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # --- esp_wiz_toe shared settings (copied from loopback) ---
 CONFIG_ESP_WIZ_TOE_ENABLED=y
 CONFIG_ESP_WIZ_TOE_CHIP_W6300=y
+CONFIG_ESP_WIZ_TOE_BACKEND_TOE=y
 # pins/clock/QSPI come from the component Kconfig W6300 defaults
+# Switch to CONFIG_ESP_WIZ_TOE_BACKEND_ETH=y to run the chip as an esp_eth
+# MACRAW MAC; the Ethernet vtable then uses esp_netif DHCP + the LwIP resolver
+# instead of the ioLibrary clients (see src/eth_dhcp_dns.c).

@@ -181,6 +181,12 @@ int __wrap_lwip_setsockopt(int s, int level, int optname, const void *optval, so
         case SO_REUSEADDR:
         case SO_BROADCAST:
             errno = 0; return 0;                     /* harmless no-op */
+        case SO_BINDTODEVICE:
+            /* Pinning a socket to a netif is meaningless here: the chip IS the
+             * interface, so every TOE socket is already bound to it. Accepting
+             * the option lets portable code (e.g. the DHCP client in
+             * examples/dhcp_dns) set it unconditionally on both backends. */
+            errno = 0; return 0;
         case SO_KEEPALIVE:
             if (wiztoe_setsockopt(toe_fd, WIZTOE_OPT_KEEPALIVE, optval, optlen) < 0) {
                 errno = EINVAL; return -1;
