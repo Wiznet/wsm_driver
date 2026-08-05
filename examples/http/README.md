@@ -61,32 +61,44 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 | RESET   | 21 |
 | INT     | 8  |
 
+### Network backend
+
+`Component config -> WIZnet TOE Component -> Network backend` picks which stack carries the traffic. **The example source does not change** — the choice is made by the linker:
+
+| menuconfig choice | What `src/http.c`'s `ops->socket()` / `ops->recv()` / `ops->send()` resolve to |
+|-------------------|-------------------------------------------------------------------------------|
+| **TOE (hardware TCP/IP)** *(default)* | `__wrap_lwip_*` — `-Wl,--wrap` redirects lwIP's BSD entry points to the WIZnet chip's hardware sockets (`port/ioLibrary_Driver/src/wiztoe_wrap.c`) |
+| **esp_eth MACRAW + software LwIP** | `lwip_*` — the chip runs as a plain SPI Ethernet MAC and the ESP32-S3's software LwIP owns TCP/IP |
+
+The engine never contains an `#if`: it is handed the component's `net_eth_ops` vtable (plain `lwip_*`, which the linker aims at whichever backend is selected), and Wi-Fi is handed `net_wifi_ops`, which binds `__real_lwip_*` when the wrap is active so Wi-Fi always reaches the real software LwIP.
+
+The ioLibrary `httpServer` (`Internet/httpServer`) is **not** used. It drives the chip's socket registers directly, so `--wrap` has nothing to intercept and one source could not serve both backends — `src/http.c` speaks HTTP/1.1 over `ops->recv()` / `ops->send()` instead.
+
 ### Network configuration
 
-Configure the network settings in the `examples/http/main/main.c` file.
+Network identity and ports live in `examples/http/inc/net_config.h`, the same way as in `examples/loopback` and `examples/dhcp_dns`:
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+
+#define WIFI_SSID             ""      /* empty -> Ethernet only */
+#define WIFI_PASS             ""
+
+#define HTTP_PORT             80      /* Ethernet */
+#define WIFI_HTTP_PORT        8080    /* Wi-Fi    */
+#define HTTP_RECV_TIMEOUT_MS  (10 * 1000)
+#define HTTP_BUF_SIZE         2048
 ```
 
-### HTTP server configuration
+`main.c` assembles a `wiz_NetInfo` from these and hands it to `wiznet_net_init()`, which applies it to the chip with `wizchip_setnetinfo()`.
 
-The HTTP server listens on port 80 and serves the web page across 4 hardware sockets. These settings are defined in `examples/http/main/main.c`.
+### Web page
 
-```cpp
-/* Socket */
-#define HTTP_SOCKET_MAX_NUM 4
-
-static uint8_t g_http_socket_num_list[HTTP_SOCKET_MAX_NUM] = {0, 1, 2, 3};
-```
-
-The page served to the browser is defined in `examples/http/main/web_page.h` and registered as `index.html`.
+The page served to the browser is defined in `examples/http/inc/web_page.h` and answered for `/` and `/index.html`.
 
 ```cpp
 #define index_page  "<!DOCTYPE html>"\
@@ -100,6 +112,37 @@ The page served to the browser is defined in `examples/http/main/web_page.h` and
                     "</body>"\
                     "</html>"
 ```
+
+### Running on Wi-Fi at the same time (optional)
+
+Fill in `WIFI_SSID` and the same HTTP server also comes up on a Wi-Fi STA, as a sibling task at the same level as the Ethernet one:
+
+```cpp
+http_server_start("eth",  &net_eth_ops,  HTTP_PORT,      wiznet_net_is_up);
+http_server_start("wifi", &net_wifi_ops, WIFI_HTTP_PORT, wifi_net_is_up);
+```
+
+Each interface gets its own task and its own buffer, so nothing is shared. The two use different ports because with the esp_eth backend they share one LwIP stack, where identical ports would clash on bind.
+
+Leave `WIFI_SSID` empty when committing; an empty SSID skips Wi-Fi entirely so the example still builds and runs for everyone else.
+
+### Architecture
+
+Same layout as `examples/loopback` and `examples/dhcp_dns`:
+
+| Path | Role |
+|------|------|
+| `inc/net_config.h` | network identity, ports, timeouts, buffer size |
+| `inc/web_page.h` | the page served as `/` and `/index.html` |
+| `inc/http.h` | engine API |
+| `src/http.c` | backend-neutral HTTP/1.1 server (BSD sockets via a vtable) |
+| `main/main.c` | orchestration only: bring interfaces up, start the tasks |
+
+Compared with the ioLibrary version this was ported from:
+
+- `httpServer_run()`'s `Sn_SR` state machine (`SOCK_ESTABLISHED` / `SOCK_CLOSE_WAIT` / `SOCK_CLOSED` plus the manual re-listen) over a fixed list of hardware sockets collapses into a plain `accept()` loop;
+- `httpServer_time_handler()` and its 1-second `esp_timer` disappear — the session timeout is just `SO_RCVTIMEO` on the socket;
+- the `httpParser` / `httpUtil` content registry disappears too, since this example serves exactly one page.
 
 ## Step 4: Build
 
@@ -125,24 +168,41 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-If flashing succeeds, the HTTP server URL appears in the terminal once the chip is brought up.
+When the device boots, the assigned IP and the listening log appear in the terminal.
 
 ```
-HTTP server: http://192.168.11.2
+I (522) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (525) http: [eth] waiting for link...
+I (527) http: [eth] HTTP server listening on port 80
+```
+
+With Wi-Fi configured, the second server appears once DHCP has assigned an address:
+
+```
+I (xxxxx) wifi: got IP 192.168.11.7
+I (xxxxx) http: [wifi] HTTP server listening on port 8080
 ```
 
 ![][link-run_socket_open]
 
-Open a web browser and enter the device URL `http://192.168.11.2/` in the address bar.
+Open a web browser and enter the device URL `http://192.168.11.2/` in the address bar (or `http://192.168.11.7:8080/` for the Wi-Fi server).
 ![][link-run_browser]
 
-The served web page appears, showing the **Hello, World!** heading from `web_page.h`.
+The served web page appears, showing the **Hello, World!** heading from `web_page.h`, and each request is logged:
+
+```
+I (xxxxx) http: [eth] GET /
+I (xxxxx) http: [eth] GET /favicon.ico
+```
+
 ![][link-run_webpage]
 
 ## Appendix
 
-- **Concurrent connections:** The server runs `httpServer_run()` over 4 hardware sockets (`0, 1, 2, 3`), so up to four browser connections can be served at once. Adjust `HTTP_SOCKET_MAX_NUM` and `g_http_socket_num_list` to change this.
-- **Session timeout:** A 1-second `esp_timer` periodically calls `httpServer_time_handler()` to drive the HTTP session timeout.
+- **One connection at a time:** Each interface runs a single listener and serves connections sequentially, closing after every response (`Connection: close`). This matches the WIZnet hardware sockets, where `accept()` returns the *same* socket it listened on and `close()` re-arms it — a second connection cannot be accepted while the first is open. The ioLibrary version spread `httpServer_run()` across 4 hardware sockets instead; running several listeners on one port is not portable to the software LwIP backend, where `bind()` would clash.
+- **Requests handled:** `GET` and `HEAD` for `/` and `/index.html` (a query string is ignored). Anything else gets `404 Not Found`; other methods get `501 Not Implemented`. Requests whose headers exceed `HTTP_BUF_SIZE` are truncated.
+- **Session timeout:** `SO_RCVTIMEO` (`HTTP_RECV_TIMEOUT_MS`) bounds both `accept()` and `recv()`, so a task that never sees a client — or a client that connects and then goes silent — keeps looping instead of wedging.
+- **1 ms tick:** `sdkconfig.defaults` sets `CONFIG_FREERTOS_HZ=1000`. The TOE poll loops (`wiztoe_accept` / `wiztoe_recv`) yield in 1 ms steps and count those steps for `SO_RCVTIMEO`; at the IDF default of 100 Hz a 1 ms delay truncates to 0 ticks, which busy-waits and starves the idle task.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->
