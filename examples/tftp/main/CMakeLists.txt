@@ -1,12 +1,25 @@
 idf_component_register(
     SRCS
         "main.c"
+        "../src/tftp_client.c"
+        "../src/tftp_core.c"
+        "../src/tftp_transport.c"
     INCLUDE_DIRS
         "."
+        "../inc"
     REQUIRES
         esp_wiz_toe
+        esp_wifi
+        nvs_flash
+        esp_netif
+        esp_event
         esp_timer
+        lwip
 )
+
+# NOTE: do NOT define ESP_WIZ_TOE_SOCKET_WRAP here. The esp_wiz_toe component
+# already defines it PUBLIC from CONFIG_ESP_WIZ_TOE_SOCKET_WRAP, so it arrives
+# via REQUIRES. Hardcoding it breaks the ETH backend, where the wrap is off.
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wall

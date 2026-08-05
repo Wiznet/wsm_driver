@@ -65,29 +65,51 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in `examples/tftp/main/main.c`.
+Network identity, the server and the file live in `examples/tftp/inc/net_config.h`, the same way as in `examples/loopback`:
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+
+#define WIFI_SSID             ""      /* empty -> Ethernet only */
+#define WIFI_PASS             ""
+
+#define TFTP_SERVER_IP        "192.168.11.4"        /* your PC */
+#define TFTP_FILE_NAME        "tftp_test_file.txt"
+#define TFTP_PREVIEW_BYTES    64
 ```
 
-### TFTP configuration
+`main.c` assembles a `wiz_NetInfo` from these and hands it to `wiznet_net_init()`, which applies it to the chip with `wizchip_setnetinfo()`. `TFTP_SERVER_IP` must be on the same subnet as the device.
 
-The device acts as a TFTP **client**: it sends a read (download) request to the PC-side TFTP server and reports the result. Set the server IP and the file name to download in `examples/tftp/main/main.c`.
+The device acts as a TFTP **client**: it sends a read request and reports what came back.
 
-```cpp
-/* TFTP server: change to your environment */
-#define TFTP_SERVER_IP "192.168.11.4"        // ← your PC's IP address
-#define TFTP_SERVER_FILE_NAME "tftp_test_file.txt"
-```
+### Architecture
 
-`TFTP_SERVER_IP` must match the PC's IP address on the same subnet as the device.
+Same layout as `examples/loopback`:
+
+| Path | Role |
+|------|------|
+| `inc/net_config.h` | network identity, server, file name |
+| `inc/tftp_client.h` | client API |
+| `inc/tftp_core.h` · `src/tftp_core.c` | the ioLibrary TFTP protocol, carried here |
+| `inc/tftp_transport.h` · `src/tftp_transport.c` | the network seam |
+| `src/tftp_client.c` | drives the protocol, storage hook, retransmission tick |
+| `main/main.c` | orchestration only: bring the interface up, start the task |
+
+The protocol implementation is ioLibrary's, copied into the example rather than used from `third_party`, with its public symbols renamed `TFTP_*` → `tftpc_*` so it does not clash with the component's own copy. Only four functions were changed: it reaches the network exclusively through `tftp_transport.h`, whose BSD implementation calls the component's `net_sock_ops_t` vtable. That is also what keeps lwIP out of `tftp_core.c` — ioLibrary's `netutil.h` declares `inet_addr`, `htons`, `ntohs` and friends with different signatures from lwIP's, so the two must never be seen together.
+
+To run the transfer over Wi-Fi instead, fill in `WIFI_SSID` and set `TFTP_OVER_WIFI` to 1 in `main.c`. Unlike the other converted examples this one does not run both interfaces at once: `tftp_core.c` keeps its state in globals, so two concurrent transfers would share it.
+
+### Fixes carried against the upstream implementation
+
+Three defects in the ioLibrary original are corrected in this copy. All three are in `third_party` too, so they are worth reporting upstream.
+
+- **Received data was discarded.** `save_data()` sits behind `#ifdef F_STORAGE`, which was never defined, so every block was acknowledged and thrown away — a transfer reported success without the file being looked at. `F_STORAGE` is enabled here and `tftp_client.c` implements the hook.
+- **The receive error path was dead.** `tftpc_run()` declared `uint16_t len` and then tested `len < 0`, so the `-1` returned when no packet arrived became 65535 and a phantom 65 KB packet was handed to the parser. `len` is now `int`.
+- **The retransmission timer never ran.** The tick that advances it lives in `data_process_count_handle()`, which nothing calls. `tftp_client.c` runs a 1 s `esp_timer` instead. This matters in practice: the first packet to a new peer usually fails while the chip resolves the peer's MAC by ARP, and without a working timer the client would wait forever.
 
 ## Step 4: Configure Tftpd64
 
@@ -141,16 +163,33 @@ idf.py -p /dev/ttyUSB0 flash monitor
 When the device boots, the assigned IP appears, then it sends the read request to the server.
 
 ```
-ip: 192.168.11.2
-tftp server ip: 192.168.11.4, file name: tftp_test_file.txt
-send request
+I (433) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (433) tftp: [eth] waiting for link...
+I (434) tftp: [eth] requesting "tftp_test_file.txt" from 192.168.11.4
 ```
 
-When the download completes, the device prints the success result.
+The protocol trace and the result follow. The first block's contents are echoed so a
+transfer is visibly a transfer, not just a success code.
 
 ```
-tftp read success, file name: tftp_test_file.txt
+>> TFTP RRQ : FileName(tftp_test_file.txt), Mode(octet)
+<< TFTP_OACK :
+>> TFTP ACK : Block Number(0)
+<< TFTP_DATA : opcode(3), block_num(1)
+I (6458) tftp: first block: "WIZnet esp_wiz_toe TFTP test file  Transferred over th" ...
+>> TFTP ACK : Block Number(1)
+<< TFTP_DATA : opcode(3), block_num(2)
+>> TFTP ACK : Block Number(2)
+<< TFTP_DATA : opcode(3), block_num(3)
+>> TFTP ACK : Block Number(3)
+I (6488) tftp: [eth] "tftp_test_file.txt" received: 1461 bytes in 3 blocks
 ```
+
+The byte and block counts should match what Tftpd64 reports in its **Tftp Server** tab.
+
+> A gap of a second or two before the first `TFTP RRQ` is normal. The chip resolves
+> the server's MAC with ARP inside `sendto()`, and the first packet to a new peer
+> often times out before the reply arrives; the retransmission timer sends it again.
 
 ![][link-run_tftp_success]
 
@@ -175,6 +214,36 @@ Check in order:
 
 4. **Server interface**
    Tftpd64's **Server interfaces** must be set to the same PC IP address used by `TFTP_SERVER_IP` in the code.
+
+5. **Another TFTP server may already own UDP 69**
+   This is the one that looks exactly like a device-side bug and is not. If a second
+   TFTP server is installed — OpenTFTPServer and similar ship as an auto-start Windows
+   service — it takes port 69 first, Tftpd64 silently falls back to IPv6 only, and every
+   request is answered by the *other* server, which has never heard of your file. The
+   giveaway is that Tftpd64's **Server interfaces** keeps reverting to `::1`.
+
+   ```powershell
+   Get-NetUDPEndpoint -LocalPort 69 | ForEach-Object {
+       "{0,-18} {1}" -f $_.LocalAddress, (Get-Process -Id $_.OwningProcess).Name
+   }
+   ```
+
+   Anything other than Tftpd64 on your PC's address is the culprit. Stop it from an
+   elevated shell, then restart Tftpd64:
+
+   ```powershell
+   Stop-Service <ServiceName>
+   Set-Service <ServiceName> -StartupType Manual   # so it does not come back on reboot
+   ```
+
+6. **Confirm the server independently**
+   Test the server without the device at all — `curl` on Windows 10+ speaks TFTP:
+
+   ```powershell
+   curl.exe -o out.txt tftp://192.168.11.4/tftp_test_file.txt
+   ```
+
+   If this fails, the problem is on the PC and nothing on the device will fix it.
 
    Example:
 
