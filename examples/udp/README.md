@@ -63,38 +63,84 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/udp/main/main.c` file.
+Network identity and ports live in `examples/udp/inc/net_config.h`, the same way as
+in `examples/loopback`:
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+
+#define WIFI_SSID             ""      /* empty -> Ethernet only */
+#define WIFI_PASS             ""
+
+#define UDP_ECHO_PORT             5000    /* Ethernet, server role */
+#define UDP_ECHO_CLIENT_PORT      50000   /* Ethernet, client role */
+#define WIFI_UDP_ECHO_PORT        5001    /* Wi-Fi, server role    */
+#define WIFI_UDP_ECHO_CLIENT_PORT 50001   /* Wi-Fi, client role    */
+#define UDP_ECHO_BUF_SIZE         2048
 ```
+
+`main.c` assembles a `wiz_NetInfo` from these and hands it to `wiznet_net_init()`,
+which applies it to the chip with `wizchip_setnetinfo()`.
+
+### Running on Wi-Fi at the same time (optional)
+
+Fill in `WIFI_SSID` and the same echo engine also comes up on a Wi-Fi STA, as a
+sibling task at the same level as the Ethernet one:
+
+```cpp
+udp_echo_start("eth",  &net_eth_ops,  UDP_ECHO_BIND_PORT,      wiznet_net_is_up);
+udp_echo_start("wifi", &net_wifi_ops, WIFI_UDP_ECHO_BIND_PORT, wifi_net_is_up);
+```
+
+The two interfaces use different ports because with `SOCKET_WRAP=0` (esp_eth
+backend) they share one LwIP stack, where identical ports would clash on bind.
+
+Wait for this line before testing the Wi-Fi side — the socket only opens once DHCP
+has assigned an address:
+
+```
+I (xxxx) wifi: got IP 192.168.11.7
+I (xxxx) udp_echo: [wifi] UDP echo on port 5001
+```
+
+Leave `WIFI_SSID` empty when committing; an empty SSID skips Wi-Fi entirely so the
+example still builds and runs for everyone else.
 
 ### UDP role configuration
 
-This example runs as a UDP echo server or a UDP client. Select the role in menuconfig under **UDP Example Configuration -> UDP role** (`EXAMPLE_UDP_ROLE`):
+Select the role in menuconfig under **UDP Example Configuration -> UDP role**
+(`EXAMPLE_UDP_ROLE`):
 
-- **UDP server (echo on port 5000)** — `EXAMPLE_UDP_SERVER` (default): the device opens UDP socket 0 on port 5000 and echoes every datagram it receives back to the sender.
-- **UDP client (loopback to a peer server)** — `EXAMPLE_UDP_CLIENT`: the device acts as a loopback client to a peer UDP server.
+- **UDP server** — `EXAMPLE_UDP_SERVER` (default): binds `UDP_ECHO_PORT` (5000)
+  and echoes every datagram back to its sender.
+- **UDP client** — `EXAMPLE_UDP_CLIENT`: binds `UDP_ECHO_CLIENT_PORT` (50000),
+  echoes the same way, and additionally logs each received payload.
 
-The UDP port is fixed in `examples/udp/main/main.c`:
+Both roles are echo responders — they never initiate. That matches the ioLibrary
+reference this example is ported from, where `loopback_udpc()` likewise only
+opens an ephemeral port and replies; the difference between the two roles is the
+local port and the logging.
 
-```cpp
-/* Port */
-#define PORT_LOOPBACK 5000
-```
+### Architecture
 
-For the UDP client role, also set the peer (PC) UDP server address in `examples/udp/main/main.c`:
+Same layout as `examples/loopback`:
 
-```cpp
-/* Peer UDP server for the client role */
-static uint8_t g_dest_ip[4] = {192, 168, 11, 100};
-```
+| Path | Role |
+|------|------|
+| `inc/net_config.h` | network identity, ports, buffer size |
+| `inc/udp_echo.h` | engine API |
+| `src/udp_echo.c` | backend-neutral echo engine (BSD sockets via a vtable) |
+| `main/main.c` | orchestration only: bring the chip up, start the task |
+
+The engine calls BSD sockets through the component's `net_sock_ops_t` vtable and
+is handed `net_eth_ops` — the plain `lwip_*` entry points, which the `esp_wiz_toe`
+component redirects to the WIZnet hardware sockets at link time via `-Wl,--wrap`
+(`CONFIG_ESP_WIZ_TOE_SOCKET_WRAP`). Running the same engine on Wi-Fi as well is a
+second `udp_echo_start()` call with `net_wifi_ops`.
 
 ## Step 4: Build
 
@@ -123,8 +169,9 @@ idf.py -p /dev/ttyUSB0 flash monitor
 If flashing succeeds, the assigned IP and the UDP server start logs appear in the terminal.
 
 ```
-ip: 192.168.11.2
-UDP server (echo) on port 5000
+I (361) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (362) udp_echo: [eth] waiting for link...
+I (365) udp_echo: [eth] UDP echo on port 5000
 ```
 
 ![][link-run_socket_open]
@@ -137,7 +184,7 @@ The device echoes the same datagram back to your PC, confirming the UDP loopback
 
 ## Appendix
 
-- **UDP client role:** Select `EXAMPLE_UDP_CLIENT` in menuconfig to run the device as a loopback client to a peer UDP server. The peer address is `g_dest_ip` (`192.168.11.100`) and the port is `5000`; run a UDP server (e.g. a Hercules UDP socket on port 5000) on that PC, and the serial log shows `UDP client -> 192.168.11.100:5000`.
+- **UDP client role:** Select `EXAMPLE_UDP_CLIENT` in menuconfig. The device then binds port `50000` instead of `5000` and logs each datagram it echoes. Point Hercules at `192.168.11.2:50000` to exercise it.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->

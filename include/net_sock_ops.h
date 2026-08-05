@@ -16,6 +16,10 @@
  *                   it is the same plain lwip_* as Ethernet (one shared stack).
  * The wrap awareness lives entirely here in `port` (which owns the --wrap), so
  * app code stays free of any #if ESP_WIZ_TOE_SOCKET_WRAP.
+ *
+ * This is public component API: examples take a vtable by address and hand it to
+ * their engine, exactly as examples/loopback does. (loopback still declares a
+ * private copy of this type predating the move; new examples should use this one.)
  */
 #ifndef NET_SOCK_OPS_H
 #define NET_SOCK_OPS_H

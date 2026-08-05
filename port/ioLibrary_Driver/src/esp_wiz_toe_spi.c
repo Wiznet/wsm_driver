@@ -375,6 +375,16 @@ esp_err_t esp_wiz_toe_spi_init(const esp_wiz_toe_spi_config_t *cfg)
         .sclk_io_num = s_ctx.cfg.pin_sclk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
+        /* Must be -1, not left zero-initialised. spicommon_bus_initialize_io()
+         * gates its octal (data4..data7) wiring on `flags & SPICOMMON_BUSFLAG_OCTAL`
+         * rather than `(flags & OCTAL) == OCTAL`, and OCTAL is a superset of QUAD,
+         * so a plain quad bus enters that branch too. Left at 0 these read as
+         * GPIO0 -- a boot strapping pin -- and routing it to SPI panics the chip
+         * with "Cache error / MMU entry fault". At -1 the branch skips them. */
+        .data4_io_num = -1,
+        .data5_io_num = -1,
+        .data6_io_num = -1,
+        .data7_io_num = -1,
         .max_transfer_sz = 2048,
     };
 #if ESP_WIZ_TOE_USE_QSPI
