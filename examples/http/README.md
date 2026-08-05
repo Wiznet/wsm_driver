@@ -65,14 +65,14 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 `Component config -> WIZnet TOE Component -> Network backend` picks which stack carries the traffic. **The example source does not change** — the choice is made by the linker:
 
-| menuconfig choice | What `src/http.c`'s `ops->socket()` / `ops->recv()` / `ops->send()` resolve to |
+| menuconfig choice | What `src/http_server.c`'s `ops->socket()` / `ops->recv()` / `ops->send()` resolve to |
 |-------------------|-------------------------------------------------------------------------------|
 | **TOE (hardware TCP/IP)** *(default)* | `__wrap_lwip_*` — `-Wl,--wrap` redirects lwIP's BSD entry points to the WIZnet chip's hardware sockets (`port/ioLibrary_Driver/src/wiztoe_wrap.c`) |
 | **esp_eth MACRAW + software LwIP** | `lwip_*` — the chip runs as a plain SPI Ethernet MAC and the ESP32-S3's software LwIP owns TCP/IP |
 
 The engine never contains an `#if`: it is handed the component's `net_eth_ops` vtable (plain `lwip_*`, which the linker aims at whichever backend is selected), and Wi-Fi is handed `net_wifi_ops`, which binds `__real_lwip_*` when the wrap is active so Wi-Fi always reaches the real software LwIP.
 
-The ioLibrary `httpServer` (`Internet/httpServer`) is **not** used. It drives the chip's socket registers directly, so `--wrap` has nothing to intercept and one source could not serve both backends — `src/http.c` speaks HTTP/1.1 over `ops->recv()` / `ops->send()` instead.
+The ioLibrary `httpServer` (`Internet/httpServer`) is **not** used. It drives the chip's socket registers directly, so `--wrap` has nothing to intercept and one source could not serve both backends — `src/http_server.c` speaks HTTP/1.1 over `ops->recv()` / `ops->send()` instead.
 
 ### Network configuration
 
@@ -134,8 +134,8 @@ Same layout as `examples/loopback` and `examples/dhcp_dns`:
 |------|------|
 | `inc/net_config.h` | network identity, ports, timeouts, buffer size |
 | `inc/web_page.h` | the page served as `/` and `/index.html` |
-| `inc/http.h` | engine API |
-| `src/http.c` | backend-neutral HTTP/1.1 server (BSD sockets via a vtable) |
+| `inc/http_server.h` | engine API |
+| `src/http_server.c` | backend-neutral HTTP/1.1 server (BSD sockets via a vtable) |
 | `main/main.c` | orchestration only: bring interfaces up, start the tasks |
 
 Compared with the ioLibrary version this was ported from:

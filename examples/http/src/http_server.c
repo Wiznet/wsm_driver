@@ -3,7 +3,7 @@
  *
  * HTTP/1.1 server engine. Serves the same page as the ioLibrary version this
  * example was ported from, but written against the BSD socket API and reached
- * through a vtable, so the engine is backend-neutral (see http.h).
+ * through a vtable, so the engine is backend-neutral (see http_server.h).
  *
  * The port from the ioLibrary httpServer is mostly a simplification:
  *   - httpServer_run()'s Sn_SR state machine (SOCK_ESTABLISHED / CLOSE_WAIT /
@@ -26,7 +26,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 
-#include "http.h"
+#include "http_server.h"
 #include "web_page.h"       /* index_page */
 #include "net_config.h"     /* HTTP_BUF_SIZE, HTTP_RECV_TIMEOUT_MS */
 

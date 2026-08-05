@@ -14,7 +14,7 @@ CONFIG_ESP_WIZ_TOE_CHIP_W6300=y
 # TCP/IP via -Wl,--wrap (__wrap_lwip_*); switch to
 # CONFIG_ESP_WIZ_TOE_BACKEND_ETH=y under
 #   Component config -> WIZnet TOE Component -> Network backend
-# to run the very same http.c over esp_eth MACRAW + software LwIP (lwip_*).
+# to run the very same http_server.c over esp_eth MACRAW + software LwIP (lwip_*).
 CONFIG_ESP_WIZ_TOE_BACKEND_TOE=y
 # pins/clock/QSPI come from the component Kconfig W6300 defaults. Those symbols
 # have no prompt (hidden), so they CANNOT be overridden from here or from

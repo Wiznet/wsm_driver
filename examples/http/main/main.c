@@ -10,7 +10,7 @@
  *
  * app_main only orchestrates: bring the interfaces up, start an HTTP server on
  * each, and return. The server logic lives in the backend-neutral engine
- * http.c, which takes a socket vtable, so both interfaces run the very same
+ * http_server.c, which takes a socket vtable, so both interfaces run the very same
  * code at the same level:
  *   - Ethernet (WIZnet chip) on HTTP_PORT      (vtable: net_eth_ops)
  *   - Wi-Fi STA              on WIFI_HTTP_PORT (vtable: net_wifi_ops)
@@ -18,11 +18,11 @@
  * Which stack actually carries the traffic is decided by the LINKER, from
  * `Component config -> WIZnet TOE Component -> Network backend`:
  *   - TOE (hardware TCP/IP): net_eth_ops' plain lwip_* calls are redirected to
- *     the chip's hardware sockets by -Wl,--wrap, i.e. every call in http.c ends
+ *     the chip's hardware sockets by -Wl,--wrap, i.e. every call in http_server.c ends
  *     up in __wrap_lwip_* (see wiztoe_wrap.c);
  *   - esp_eth MACRAW + software LwIP: there is no wrap, so the same calls end up
  *     in lwip_* and run over the software stack.
- * http.c contains no #if for this — only the vtable it is handed differs, and
+ * http_server.c contains no #if for this — only the vtable it is handed differs, and
  * net_wifi_ops bypasses the wrap so Wi-Fi always reaches the real LwIP.
  *
  * The ioLibrary httpServer (Internet/httpServer) is NOT used: it drives the
@@ -47,7 +47,7 @@
 #include "wifi_backend.h"
 #include "net_sock_ops.h"
 #include "net_config.h"
-#include "http.h"
+#include "http_server.h"
 
 /* Network identity — esp_wiz_toe style (wiz_NetInfo). Applied to the WIZnet
  * chip's hardware TCP/IP stack by wiznet_net_init() -> wizchip_setnetinfo(). */

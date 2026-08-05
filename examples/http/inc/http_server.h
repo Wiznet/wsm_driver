@@ -11,7 +11,7 @@
  *
  * Nothing here calls the ioLibrary httpServer (Internet/httpServer): those
  * clients talk to the chip's socket registers directly, so --wrap has nothing to
- * intercept and one source could not serve both backends. http.c speaks HTTP/1.1
+ * intercept and one source could not serve both backends. http_server.c speaks HTTP/1.1
  * over ops->recv()/ops->send() instead.
  */
 #ifndef HTTP_H
