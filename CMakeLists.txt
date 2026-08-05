@@ -59,7 +59,7 @@ idf_component_register(
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS
-        "port/backend/inc"
+        # "port/backend/inc"
         "port/ioLibrary_Driver/inc"
     REQUIRES
         esp_driver_spi
