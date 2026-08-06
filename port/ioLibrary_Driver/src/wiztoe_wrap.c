@@ -215,26 +215,16 @@ int __wrap_lwip_setsockopt(int s, int level, int optname, const void *optval, so
     } else if (level == IPPROTO_IP) {
         wiztoe_opt_t o;
         if (optname == IP_ADD_MEMBERSHIP || optname == IP_DROP_MEMBERSHIP) {
-            /* The chip filters the group in hardware, so a join has to reach
-             * the socket-open path (see wiztoe_udp_open_multicast). ip_mreq
-             * carries no port, so the group port is the bound port -- which is
-             * exactly what BSD means by binding to the group's port. */
-            const struct ip_mreq *mreq = (const struct ip_mreq *)optval;
-            uint8_t group[4];
-            uint8_t local_ip[4];
-            uint16_t local_port = 0;
-
-            if (optlen < (socklen_t)sizeof(struct ip_mreq)) { errno = EINVAL; return -1; }
-            if (optname == IP_DROP_MEMBERSHIP) {
-                if (wiztoe_udp_leave_multicast(toe_fd) < 0) { errno = EINVAL; return -1; }
-                errno = 0; return 0;
-            }
-            memcpy(group, &mreq->imr_multiaddr.s_addr, sizeof(group));
-            wiztoe_getsockname(toe_fd, local_ip, &local_port);
-            if (wiztoe_udp_open_multicast(toe_fd, group, local_port) < 0) {
-                errno = EINVAL; return -1;
-            }
-            errno = 0; return 0;
+            /* Not mapped on purpose. The chip filters the group in hardware and
+             * latches the group's MAC when the socket opens, so a join arriving
+             * after bind() can only be applied by closing and reopening the
+             * hardware socket -- which is a decision about the application's
+             * traffic, not something a setsockopt() should do behind its back.
+             * examples/udp_multicast performs the reopen itself; see the join
+             * seam there. Reporting it unsupported keeps a caller that expects
+             * ordinary LwIP IGMP from believing it got it. */
+            errno = ENOPROTOOPT;
+            return -1;
         }
         if (optname == IP_MULTICAST_TTL || optname == IP_MULTICAST_IF ||
             optname == IP_MULTICAST_LOOP) {

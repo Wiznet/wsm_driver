@@ -60,13 +60,11 @@ int  wiztoe_recv(int fd, void *buf, size_t len);           /* 0 = EOF */
 /* UDP */
 int  wiztoe_sendto(int fd, const void *buf, size_t len, const uint8_t ip[4], uint16_t port);
 int  wiztoe_recvfrom(int fd, void *buf, size_t len, uint8_t ip[4], uint16_t *port);
-/* Join an IPv4 multicast group on a UDP fd. Safe either side of bind(): before,
- * the group is recorded and bind() opens with multicast enabled; after, the
- * hardware socket is closed and reopened, because the chip latches the group's
- * MAC when the socket opens. Reached from setsockopt(IP_ADD_MEMBERSHIP), where
- * `port` is the bound port -- struct ip_mreq carries no port of its own. */
-int  wiztoe_udp_open_multicast(int fd, const uint8_t group[4], uint16_t port);
-int  wiztoe_udp_leave_multicast(int fd);
+/* No multicast join here. The chip latches the group's MAC when the socket
+ * opens, so joining an already-bound socket means closing and reopening it --
+ * a decision about the application's own traffic rather than something the
+ * port layer should take on its behalf. examples/udp_multicast does the reopen
+ * itself; see the join seam there. */
 
 /* helpers */
 int  wiztoe_is_udp(int fd);

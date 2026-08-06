@@ -87,19 +87,65 @@ Network identity, the group and the ports live in `examples/udp_multicast/inc/ne
 
 ### How the group is joined
 
-The engine asks for membership the ordinary BSD way:
+Everything the receive engine does — `socket()`, `bind()`, `recvfrom()` — is plain BSD through the vtable. Joining is the one step the two backends cannot express the same way, so it arrives as a function pointer and `main.c` picks the right one:
+
+```cpp
+#if CONFIG_ESP_WIZ_TOE_SOCKET_WRAP
+#define ETH_JOIN  mcast_join_toe      /* WIZnet hardware sockets */
+#else
+#define ETH_JOIN  mcast_join_bsd      /* esp_eth backend: software LwIP */
+#endif
+
+mcast_rx_start("eth",  &net_eth_ops,  ETH_JOIN,        ...);
+mcast_rx_start("wifi", &net_wifi_ops, mcast_join_bsd,  ...);
+```
+
+**`mcast_join_bsd()`** is the ordinary one — bind, then ask:
 
 ```cpp
 struct ip_mreq mreq = {
     .imr_multiaddr.s_addr = inet_addr(group),
     .imr_interface.s_addr = htonl(INADDR_ANY),
 };
-ops->setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+o->setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
 ```
 
-On Wi-Fi that is plain LwIP IGMP. On the WIZnet chip the component translates it: the chip filters the group **in hardware**, deriving the multicast MAC for `Sn_DHAR` from `Sn_DIPR` at the moment the socket opens. Because the group has to be in the registers *before* the socket opens — and BSD joins *after* `bind()` — the component closes and reopens the hardware socket with `Sn_MR_MULTI` when the join arrives. A join issued before `bind()` is recorded instead, and `bind()` opens with multicast enabled from the start. Either order works, and the example code stays plain BSD.
-
 `struct ip_mreq` carries no port, so the group port is the port you bound — which is exactly what binding to a group's port means in BSD.
+
+**`mcast_join_toe()`** cannot use that call, because the chip filters the group **in hardware** and derives the multicast MAC for `Sn_DHAR` from `Sn_DIPR` at the moment the socket opens. The group has to be in the registers *before* the open, and `bind()` has already opened it, so the join closes the hardware socket and reopens it with `Sn_MR_MULTI`:
+
+```cpp
+close(sn);
+setSn_DHAR(sn, mac);          /* 01:00:5E + low 23 bits of the group (RFC 1112) */
+setSn_DIPR(sn, group);
+setSn_DPORT(sn, port);
+socket(sn, Sn_MR_UDP, port, SF_MULTI_ENABLE);
+```
+
+Datagrams arriving during the reopen are lost. That is acceptable here: a join happens once at start-up, before any traffic is expected.
+
+`SF_MULTI_ENABLE` belongs in the **flag** argument, not the protocol argument — `socket()` validates it there, and OR-ing it into the protocol gives `0x82`, which matches no protocol case at all.
+
+### The one non-standard thing in this example
+
+`mcast_join_toe()` is handed a BSD `fd` and needs the chip's socket number, so it relies on the mapping the component's `--wrap` layer applies:
+
+```
+fd == hardware socket number + LWIP_SOCKET_OFFSET
+```
+
+That is an internal rule of `esp_wiz_toe`, not a published contract, and it holds **only when `ESP_WIZ_TOE_SOCKET_WRAP` is enabled**. With the esp_eth backend the same vtable is software LwIP: `fd` is a genuine LwIP socket and there is no hardware socket behind it, so `fd - LWIP_SOCKET_OFFSET` would be a number with no meaning. That is what the `#if` in `main.c` is for.
+
+If the rule ever changes the file keeps compiling and starts writing to the wrong socket, so it checks before touching anything. `bind()` has just opened this socket for UDP, so the chip must agree it is in `SOCK_UDP`:
+
+```
+E (xxx) mcast_join: socket N is not open for UDP (Sn_SR=0x..) — refusing to
+        reopen it; the fd mapping looks wrong
+```
+
+Losing multicast is a far better outcome than silently reopening someone else's socket.
+
+The alternative was to keep this in the component, where `setsockopt(IP_ADD_MEMBERSHIP)` could hide it and the example would be pure BSD. It was moved out deliberately: closing and reopening a socket is a decision about the application's own traffic, not something a `setsockopt()` should do behind the caller's back. `wiztoe_wrap.c` now answers `ENOPROTOOPT` for `IP_ADD_MEMBERSHIP` rather than pretending to support it.
 
 ### Architecture
 
@@ -108,17 +154,21 @@ Same layout as `examples/loopback`:
 | Path | Role |
 |------|------|
 | `inc/net_config.h` | network identity, group, ports, buffer size |
-| `inc/mcast_rx.h` | engine API |
-| `src/mcast_rx.c` | backend-neutral receiver (BSD sockets via a vtable) |
+| `inc/mcast_rx.h` · `src/mcast_rx.c` | backend-neutral receiver (BSD sockets via a vtable) |
+| `inc/mcast_join.h` | the join seam: one function pointer, two implementations |
+| `src/mcast_join_bsd.c` | join through LwIP — Wi-Fi, and Ethernet on esp_eth |
+| `src/mcast_join_toe.c` | join by reopening the WIZnet hardware socket |
 | `main/main.c` | orchestration only: bring interfaces up, start the tasks |
+
+`mcast_rx.c` includes lwIP; `mcast_join_toe.c` includes ioLibrary's `socket.h`. Those two must never meet in one translation unit — both declare `close()`, with different signatures — which is why the join lives in its own files and `LWIP_SOCKET_OFFSET` reaches `mcast_join_toe.c` through a function rather than the macro.
 
 ### Running on Wi-Fi at the same time (optional)
 
 Fill in `WIFI_SSID` and the same receiver also comes up on a Wi-Fi STA:
 
 ```cpp
-mcast_rx_start("eth",  &net_eth_ops,  MCAST_GROUP_IP, MCAST_GROUP_PORT,      wiznet_net_is_up);
-mcast_rx_start("wifi", &net_wifi_ops, MCAST_GROUP_IP, WIFI_MCAST_GROUP_PORT, wifi_net_is_up);
+mcast_rx_start("eth",  &net_eth_ops,  ETH_JOIN,       MCAST_GROUP_IP, MCAST_GROUP_PORT,      wiznet_net_is_up);
+mcast_rx_start("wifi", &net_wifi_ops, mcast_join_bsd, MCAST_GROUP_IP, WIFI_MCAST_GROUP_PORT, wifi_net_is_up);
 ```
 
 The two use different ports because with `SOCKET_WRAP=0` (esp_eth backend) they share one LwIP stack, where the same port would clash on bind. Leave `WIFI_SSID` empty when committing.

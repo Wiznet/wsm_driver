@@ -26,7 +26,7 @@
 static const char *TAG = "mcast_rx";
 
 static void mcast_rx_loop(const char *tag, const net_sock_ops_t *ops,
-                          const char *group, uint16_t port,
+                          mcast_join_fn join, const char *group, uint16_t port,
                           uint8_t *buf, int buf_size)
 {
     int s = ops->socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -49,15 +49,11 @@ static void mcast_rx_loop(const char *tag, const net_sock_ops_t *ops,
         return;
     }
 
-    /* Joining after bind() is the usual BSD order, and the one the component
-     * has to absorb on the TOE: the chip latches the group's MAC when the
-     * socket opens, so the join reopens it. Nothing here needs to know that. */
-    struct ip_mreq mreq = {
-        .imr_multiaddr.s_addr = inet_addr(group),
-        .imr_interface.s_addr = htonl(INADDR_ANY),
-    };
-    if (ops->setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
-        ESP_LOGE(TAG, "[%s] joining %s failed: errno %d", tag, group, errno);
+    /* Joining after bind() is the usual BSD order. How it is carried out is the
+     * one thing that differs between the two backends, so it arrives as a
+     * function pointer -- see mcast_join.h. */
+    if (join(ops, s, group, port) < 0) {
+        ESP_LOGE(TAG, "[%s] joining %s failed", tag, group);
         ops->close(s);
         return;
     }
@@ -82,6 +78,7 @@ static void mcast_rx_loop(const char *tag, const net_sock_ops_t *ops,
 typedef struct {
     const char           *name;
     const net_sock_ops_t *ops;
+    mcast_join_fn         join;
     const char           *group;
     uint16_t              port;
     bool                (*is_up)(void);
@@ -104,7 +101,7 @@ static void mcast_rx_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    mcast_rx_loop(c->name, c->ops, c->group, c->port, buf, MCAST_BUF_SIZE);
+    mcast_rx_loop(c->name, c->ops, c->join, c->group, c->port, buf, MCAST_BUF_SIZE);
 
     free(buf);       /* mcast_rx_loop only returns on a fatal setup error */
     free(c);
@@ -112,7 +109,8 @@ static void mcast_rx_task(void *arg)
 }
 
 void mcast_rx_start(const char *name, const net_sock_ops_t *ops,
-                    const char *group, uint16_t port, bool (*is_up)(void))
+                    mcast_join_fn join, const char *group, uint16_t port,
+                    bool (*is_up)(void))
 {
     mcast_rx_ctx_t *c = malloc(sizeof(*c));
     if (c == NULL) {
@@ -121,6 +119,7 @@ void mcast_rx_start(const char *name, const net_sock_ops_t *ops,
     }
     c->name = name;
     c->ops = ops;
+    c->join = join;
     c->group = group;
     c->port = port;
     c->is_up = is_up;

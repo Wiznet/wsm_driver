@@ -1,6 +1,8 @@
 idf_component_register(
     SRCS
         "main.c"
+        "../src/mcast_join_bsd.c"
+        "../src/mcast_join_toe.c"
         "../src/mcast_rx.c"
     INCLUDE_DIRS
         "."

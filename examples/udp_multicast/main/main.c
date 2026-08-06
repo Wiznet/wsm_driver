@@ -15,10 +15,11 @@
  *   - Ethernet (WIZnet chip) on MCAST_GROUP_PORT      (vtable: net_eth_ops)
  *   - Wi-Fi STA              on WIFI_MCAST_GROUP_PORT (vtable: net_wifi_ops)
  *
- * Group membership goes through the standard setsockopt(IP_ADD_MEMBERSHIP). On
- * the Ethernet side the component turns that into the chip's hardware group
- * filter (Sn_DHAR / Sn_DIPR / Sn_DPORT plus a socket reopen with Sn_MR_MULTI);
- * on Wi-Fi it is plain LwIP IGMP. Neither the engine nor this file has an #if.
+ * Group membership is the one step the two backends cannot share, so each is
+ * handed the join that suits it (see mcast_join.h). Wi-Fi always joins through
+ * LwIP; Ethernet joins through the chip when the TOE wrap is on, and through
+ * LwIP when the esp_eth backend is selected instead. That choice is made here,
+ * once, so the receive engine stays free of it.
  *
  * Wi-Fi is optional: leave WIFI_SSID empty in net_config.h to run Ethernet-only.
  *
@@ -32,7 +33,17 @@
 #include "wifi_backend.h"
 #include "net_sock_ops.h"
 #include "net_config.h"
+#include "mcast_join.h"
 #include "mcast_rx.h"
+
+/* Ethernet reaches the WIZnet hardware sockets only when the wrap is on. With
+ * the esp_eth backend the same vtable is software LwIP, and the chip-level join
+ * would have no socket to act on. */
+#if CONFIG_ESP_WIZ_TOE_SOCKET_WRAP
+#define ETH_JOIN  mcast_join_toe
+#else
+#define ETH_JOIN  mcast_join_bsd
+#endif
 
 /* Network identity — esp_wiz_toe style (wiz_NetInfo). Applied to the WIZnet
  * chip's hardware TCP/IP stack by wiznet_net_init() -> wizchip_setnetinfo(). */
@@ -66,10 +77,10 @@ void app_main(void)
     /* Start both receivers as sibling tasks; each waits for its own link.
      * Same call shape — only the label, vtable, port and readiness predicate
      * differ. */
-    mcast_rx_start("eth", &net_eth_ops, MCAST_GROUP_IP, MCAST_GROUP_PORT,
-                   wiznet_net_is_up);
+    mcast_rx_start("eth", &net_eth_ops, ETH_JOIN,
+                   MCAST_GROUP_IP, MCAST_GROUP_PORT, wiznet_net_is_up);
     if (WIFI_CONFIGURED) {
-        mcast_rx_start("wifi", &net_wifi_ops, MCAST_GROUP_IP, WIFI_MCAST_GROUP_PORT,
-                       wifi_net_is_up);
+        mcast_rx_start("wifi", &net_wifi_ops, mcast_join_bsd,
+                       MCAST_GROUP_IP, WIFI_MCAST_GROUP_PORT, wifi_net_is_up);
     }
 }
