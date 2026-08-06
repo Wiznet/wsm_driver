@@ -103,6 +103,26 @@ The protocol implementation is ioLibrary's, copied into the example rather than 
 
 To run the transfer over Wi-Fi instead, fill in `WIFI_SSID` and set `TFTP_OVER_WIFI` to 1 in `main.c`. Unlike the other converted examples this one does not run both interfaces at once: `tftp_core.c` keeps its state in globals, so two concurrent transfers would share it.
 
+Both paths were verified against Tftpd64 on the same 192.168.11.0/24 LAN, and the same file arrives either way — the transport swap is the only difference:
+
+```
+# TFTP_OVER_WIFI 0 -- W6300 hardware sockets
+I (433)  wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (434)  tftp: [eth] requesting "tftp_test_file.txt" from 192.168.11.4
+>> TFTP RRQ : FileName(tftp_test_file.txt), Mode(octet)
+>> TFTP RRQ : FileName(tftp_test_file.txt), Mode(octet)     <- ARP retransmission
+I (6488) tftp: [eth] "tftp_test_file.txt" received: 1461 bytes in 3 blocks
+
+# TFTP_OVER_WIFI 1 -- software LwIP on the Wi-Fi netif
+I (2180) esp_netif_handlers: sta ip: 192.168.11.7, mask: 255.255.255.0, gw: 192.168.11.1
+I (2234) tftp: [wifi] requesting "tftp_test_file.txt" from 192.168.11.4
+I (2594) tftp: [wifi] "tftp_test_file.txt" received: 1461 bytes in 3 blocks
+```
+
+The doubled RRQ on Ethernet is the retransmission timer doing its job: the chip resolves the server's MAC by ARP inside `sendto()`, and the first attempt to a cold peer times out. Wi-Fi shows no retry because lwIP queues the packet behind its own ARP request instead of failing the send.
+
+Note that the Wi-Fi station needs a route to the TFTP server. Here the AP bridges onto the same LAN as the PC, so the board's DHCP address (192.168.11.7) and the server (192.168.11.4) share a subnet. On an isolated AP, point `TFTP_SERVER_IP` at an address the station can actually reach.
+
 ### Fixes carried against the upstream implementation
 
 Three defects in the ioLibrary original are corrected in this copy. All three are in `third_party` too, so they are worth reporting upstream.
