@@ -158,9 +158,12 @@ I (528) mcast_rx: [eth] listening to 224.0.0.5:30000
 With Wi-Fi configured, the second receiver appears once DHCP has assigned an address:
 
 ```
-I (xxxxx) wifi: got IP 192.168.11.7
-I (xxxxx) mcast_rx: [wifi] listening to 224.0.0.5:30001
+I (181336) esp_netif_handlers: sta ip: 192.168.11.7, mask: 255.255.255.0, gw: 192.168.11.1
+I (181337) wifi: got IP 192.168.11.7
+I (181424) mcast_rx: [wifi] listening to 224.0.0.5:30001
 ```
+
+That timestamp is not a typo — see [DHCP can take minutes with both interfaces up](#dhcp-can-take-minutes-with-both-interfaces-up) below. The Ethernet receiver is unaffected and starts within a second.
 
 ![][link-run_socket_open]
 
@@ -173,9 +176,32 @@ Send any data from Hercules to the multicast group. The device receives the data
 I (xxxxx) mcast_rx: [eth] 5 bytes from 192.168.11.4: hello
 ```
 
+This example only receives. It never answers, so Hercules' *Received data* pane stays empty apart from its own socket messages — the serial monitor is the only place a result shows up.
+
+With both interfaces up, the same sender reaches both receivers on their own ports:
+
+```
+# to 224.0.0.5:30000
+I (745573) mcast_rx: [eth]  57 bytes from 192.168.11.4: 123123123123123...
+
+# to 224.0.0.5:30001
+I (811824) mcast_rx: [wifi] 50 bytes from 192.168.11.4: mcast test #1 from 192.168.11.4 to 224.0.0.5:30001
+I (813065) mcast_rx: [wifi] 50 bytes from 192.168.11.4: mcast test #2 from 192.168.11.4 to 224.0.0.5:30001
+```
+
+The Ethernet line comes off the W6300's hardware group filter, the Wi-Fi line off LwIP IGMP, and `mcast_rx.c` is identical for both.
+
 ![][link-run_multicast]
 
 To check that the hardware filter really is filtering, send to a *different* group (say `224.0.0.9`) on the same port — the device should stay silent.
+
+### DHCP can take minutes with both interfaces up
+
+With Wi-Fi configured, the station associates in well under a second but the DHCP lease can take anywhere from two seconds to three minutes. It always arrives eventually, and Ethernet is never affected. The same delay shows up in the other dual-interface examples, so it is not specific to multicast.
+
+The likely cause is that both interfaces end up on one subnet. `wiznet_net_init()` registers an LwIP netif for the WIZnet chip carrying the static identity from `net_config.h` (192.168.11.2/24 by default), and if the AP bridges onto the same LAN the Wi-Fi station is offered an address in that same /24. LwIP's `ip4_route()` picks the first netif whose subnet matches the destination, so the DHCP client's unicast traffic to the server can leave through the Ethernet netif instead of the Wi-Fi one; the exchange then only completes on a retry that happens to work out.
+
+That explanation has not been confirmed yet. If it holds, putting the two interfaces on different subnets should clear it — change `NET_IP_ADDR` in `net_config.h` to something outside the AP's range, e.g. `{192, 168, 20, 2}`.
 
 ### If nothing arrives: check which adapter Windows sends multicast on
 
