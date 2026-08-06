@@ -85,8 +85,8 @@ Network identity and ports live in `examples/http/inc/net_config.h`, the same wa
 #define NET_GATEWAY           {192, 168, 11, 1}
 #define NET_DNS_ADDR          {8, 8, 8, 8}
 
-#define WIFI_SSID             ""      /* empty -> Ethernet only */
-#define WIFI_PASS             ""
+#define WIFI_SSID             "your-ssid"      /* leave empty -> Ethernet only */
+#define WIFI_PASS             "your-password"
 
 #define HTTP_PORT             80      /* Ethernet */
 #define WIFI_HTTP_PORT        8080    /* Wi-Fi    */
@@ -115,7 +115,7 @@ The page served to the browser is defined in `examples/http/inc/web_page.h` and 
 
 ### Running on Wi-Fi at the same time (optional)
 
-Fill in `WIFI_SSID` and the same HTTP server also comes up on a Wi-Fi STA, as a sibling task at the same level as the Ethernet one:
+`net_config.h` ships with the `WIFI_SSID` / `WIFI_PASS` placeholders. Replace them with your AP credentials and the same HTTP server also comes up on a Wi-Fi STA, as a sibling task at the same level as the Ethernet one:
 
 ```cpp
 http_server_start("eth",  &net_eth_ops,  HTTP_PORT,      wiznet_net_is_up);
@@ -124,7 +124,7 @@ http_server_start("wifi", &net_wifi_ops, WIFI_HTTP_PORT, wifi_net_is_up);
 
 Each interface gets its own task and its own buffer, so nothing is shared. The two use different ports because with the esp_eth backend they share one LwIP stack, where identical ports would clash on bind.
 
-Leave `WIFI_SSID` empty when committing; an empty SSID skips Wi-Fi entirely so the example still builds and runs for everyone else.
+Clear `WIFI_SSID` to `""` when committing; an empty SSID skips Wi-Fi entirely so the example still builds and runs Ethernet-only for everyone else.
 
 ### Architecture
 

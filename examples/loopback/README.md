@@ -63,41 +63,50 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 
 ### Network configuration
 
-Configure the network settings in the `examples/loopback/main/main.c` file.
+All example settings live in `examples/loopback/inc/net_config.h`; `main.c` assembles them into the `wiz_NetInfo` it hands to `wiznet_net_init()`, which applies it to the chip with `wizchip_setnetinfo()`.
 
 ```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}  /* WIZnet OUI */
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+```
+
+### Wi-Fi configuration
+
+The example runs the same echo server on the Wi-Fi STA alongside Ethernet, so fill in your AP credentials in the same file:
+
+```cpp
+#define WIFI_SSID             "your-ssid"
+#define WIFI_PASS             "your-password"
 ```
 
 ### Loopback configuration
 
-Select the loopback variant to run and its port in `examples/loopback/main/main.c`. By default the TCP server loopback runs on port 5000.
+Ports, the TCP-client destination, and the buffer size are in `net_config.h` as well. Each interface listens on its own port so that the shared LwIP stack has no bind clash.
 
 ```cpp
-/* Select the loopback variant (only one at a time) */
-#define TCP_SERVER
-// #define TCP_CLIENT
-// #define UDP
-
-/* Port */
-#define PORT_TCP_SERVER      5000
-#define PORT_TCP_CLIENT      5001
-#define PORT_TCP_CLIENT_DEST 5002
-#define PORT_UDP             5003
+#define LOOPBACK_PORT         5000              /* Ethernet echo port */
+#define WIFI_LOOPBACK_PORT    5001              /* Wi-Fi echo port    */
+#define LOOPBACK_TARGET_IP    "192.168.11.100"  /* TCP-client mode destination */
+#define LOOPBACK_TARGET_PORT  5000
+#define LOOPBACK_BUF_SIZE     2048
 ```
 
-For the TCP client variant, also set the destination (PC server) address:
+The loopback variant itself is the compile-time switch `LOOPBACK_MODE` in `examples/loopback/src/loopback.c`. It defaults to the TCP server and applies to **both** interfaces.
 
 ```cpp
-static uint8_t  g_tcp_client_destip[] = {192, 168, 11, 100};
-static uint16_t g_tcp_client_destport = PORT_TCP_CLIENT_DEST;
+#define LOOPBACK_TCP_SERVER   0
+#define LOOPBACK_TCP_CLIENT   1
+#define LOOPBACK_UDP          2
+
+#ifndef LOOPBACK_MODE
+#define LOOPBACK_MODE         LOOPBACK_TCP_SERVER
+#endif
 ```
+
+Edit that default, or override it from the build without touching the source by adding `-DLOOPBACK_MODE=1` (TCP client) or `-DLOOPBACK_MODE=2` (UDP) to the `target_compile_options()` in `examples/loopback/main/CMakeLists.txt`.
 
 ## Step 4: Build
 
@@ -123,10 +132,19 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-If flashing succeeds, the assigned IP and the TCP server socket open logs appear in the terminal.
+If flashing succeeds, the assigned IP and the TCP server socket open logs appear in the terminal. Every line from the echo engine is prefixed with the interface label (`eth` or `wifi`).
 
 ```
-ip: 192.168.11.2
+I (522) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (525) loopback: [eth] waiting for link...
+I (527) loopback: [eth] loopback: TCP SERVER on port 5000
+I (528) loopback: [eth] TCP server listening on port 5000
+```
+
+With Wi-Fi configured, the second server appears on port 5001 once the STA has an address:
+
+```
+I (xxxxx) loopback: [wifi] TCP server listening on port 5001
 ```
 
 ![][link-run_socket_open]
@@ -139,9 +157,9 @@ After connecting, send any data from Hercules. The device echoes the same data b
 
 ## Appendix
 
-- **TCP client / UDP variants:** Enable `TCP_CLIENT` or `UDP` instead of `TCP_SERVER` to test the other loopback modes. In TCP client mode the device connects to a PC TCP server (`g_tcp_client_destip`); in UDP mode open a Hercules UDP socket to the device IP on port `5003`.
+- **TCP client / UDP variants:** Set `LOOPBACK_MODE` to `1` or `2` to test the other loopback modes. In TCP client mode both interfaces connect out to a PC TCP server at `LOOPBACK_TARGET_IP:LOOPBACK_TARGET_PORT` (`192.168.11.100:5000`) and echo whatever it sends; in UDP mode open a Hercules UDP socket to the device IP on port `5000` (Ethernet) or `5001` (Wi-Fi).
+- **Two interfaces, one engine:** `main.c` calls `loopback_start()` twice with identical arguments except the label, socket vtable, port and readiness predicate. Ethernet uses `loopback_lwip_ops` (plain `lwip_*`, which `-Wl,--wrap` redirects to the chip's hardware sockets when `CONFIG_ESP_WIZ_TOE_SOCKET_WRAP` is on); Wi-Fi uses `wifi_loopback_ops`, which binds `__real_lwip_*` so it always reaches the real software LwIP. The echo logic in `src/loopback.c` contains no `#if` for the backend.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
-- **WS2812B LED:** The example also drives an onboard WS2812B LED on GPIO38, cycling colors as a quick visual sanity check that the board is running.
 
 <!-- Link -->
 [link-tera_term]: https://osdn.net/projects/ttssh2/releases/

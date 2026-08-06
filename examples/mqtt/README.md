@@ -88,8 +88,8 @@ Network identity, broker, and topics live in `examples/mqtt/inc/net_config.h`, t
 #define NET_GATEWAY             {192, 168, 11, 1}
 #define NET_DNS_ADDR            {8, 8, 8, 8}
 
-#define WIFI_SSID               ""      /* empty -> Ethernet only */
-#define WIFI_PASS               ""
+#define WIFI_SSID               "your-ssid"      /* leave empty -> Ethernet only */
+#define WIFI_PASS               "your-password"
 ```
 
 `main.c` assembles a `wiz_NetInfo` from these and hands it to `wiznet_net_init()`, which applies it to the chip with `wizchip_setnetinfo()`.
@@ -137,7 +137,7 @@ The mode is applied in `main.c` by filling in — or leaving out — `pub_topic`
 
 ### Running on Wi-Fi at the same time (optional)
 
-Fill in `WIFI_SSID` and the same MQTT client also comes up on a Wi-Fi STA, as a sibling task at the same level as the Ethernet one:
+`net_config.h` ships with the `WIFI_SSID` / `WIFI_PASS` placeholders. Replace them with your AP credentials and the same MQTT client also comes up on a Wi-Fi STA, as a sibling task at the same level as the Ethernet one:
 
 ```cpp
 mqtt_client_start("eth",  &net_eth_ops,  &cfg, wiznet_net_is_up);
@@ -150,7 +150,7 @@ mqtt_client_start("wifi", &net_wifi_ops, &cfg, wifi_net_is_up);
 
 Each interface gets its own task, its own buffers, and its own broker session. Everything that identifies the client on the broker is swapped, not just the ID: the ID because a broker closes the older session when a second client connects with the same one, and the topics so the two publishes stay apart and an inbound message reaches only the interface it was addressed to. (In `main.c` the topic assignments sit under the same `#ifdef`s as the initializer, so a topic the MQTT mode leaves out stays `NULL` for both clients.)
 
-Leave `WIFI_SSID` empty when committing; an empty SSID skips Wi-Fi entirely so the example still builds and runs for everyone else.
+Clear `WIFI_SSID` to `""` when committing; an empty SSID skips Wi-Fi entirely so the example still builds and runs Ethernet-only for everyone else.
 
 ### Architecture
 
