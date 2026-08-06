@@ -62,37 +62,63 @@ Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, a
 | RESET   | 21 |
 | INT     | 8  |
 
-### Network configuration
+### Network backend
 
-Configure the network settings in the `examples/netbios/main/main.c` file.
+Under `Component config -> WIZnet TOE Component -> Network backend` there are two
+choices, and the same `src/netbios.c` runs on either:
 
-```cpp
-static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip  = {192, 168, 11, 2},                    // IP address
-    .sn  = {255, 255, 255, 0},                   // Subnet Mask
-    .gw  = {192, 168, 11, 1},                    // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
-};
+| Backend | What carries the traffic | Which symbols the responder calls |
+|---------|--------------------------|-----------------------------------|
+| **TOE (hardware TCP/IP)** *(default)* | the chip's own TCP/IP stack | `__wrap_lwip_*` — `-Wl,--wrap` redirects the engine's `lwip_*` calls to the hardware sockets (`wiztoe_wrap.c`) |
+| **esp_eth MACRAW + software LwIP** | the ESP32-S3's LwIP stack, chip as a MAC | `lwip_*` — no wrap, the calls run over software LwIP |
+
+`netbios.c` has no `#if` for this. It calls sockets through the component's
+`net_sock_ops_t` vtable and the LINKER picks the target; the Wi-Fi vtable
+(`net_wifi_ops`) binds `__real_lwip_*` when the wrap is active, so Wi-Fi always
+reaches the real software stack.
+
+### Network and NetBIOS configuration
+
+All of the example's settings live in `examples/netbios/inc/net_config.h`.
+
+```c
+/* ---- static network identity (esp_wiz_toe style: wiz_NetInfo byte arrays) ---- */
+#define NET_MAC_ADDR          {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}  /* WIZnet OUI */
+#define NET_IP_ADDR           {192, 168, 11, 2}
+#define NET_SUBNET_MASK       {255, 255, 255, 0}
+#define NET_GATEWAY           {192, 168, 11, 1}
+#define NET_DNS_ADDR          {8, 8, 8, 8}
+
+/* ---- Wi-Fi STA config (leave WIFI_SSID empty to run Ethernet-only) ---- */
+#define WIFI_SSID             ""
+#define WIFI_PASS             ""
+
+/* ---- NetBIOS responder config ---- */
+#define NETBIOS_NAME          "WIZNET"        /* Ethernet (WIZnet chip) */
+#define WIFI_NETBIOS_NAME     "WIZNETWIFI"    /* Wi-Fi STA */
+#define NETBIOS_PORT          137             /* NetBIOS name service (UDP) */
 ```
 
-### NetBIOS configuration
+The board answers name queries for `NETBIOS_NAME` on Ethernet and, when Wi-Fi is
+configured, for `WIFI_NETBIOS_NAME` on the Wi-Fi STA. The two names must differ:
+NetBIOS names have to be unique on the segment, so a host that can see both
+interfaces does not get two answers for one name. Names are case-insensitive and
+at most 15 characters.
 
-The NetBIOS responder runs on socket 3, defined in `examples/netbios/main/main.c`:
+### Source layout
 
-```cpp
-/* Socket */
-#define SOCK_NETBIOS 3
-```
+| File | Role |
+|------|------|
+| `main/main.c` | orchestration only: bring both interfaces up, start one responder task per interface |
+| `src/netbios.c` | the backend-neutral responder — every network call goes through `ops->sock->…` |
+| `src/eth_netbios.c` | Ethernet hooks: the address to answer with (`wizchip_getnetinfo` on TOE, `esp_netif` on ETH) |
+| `src/netif_netbios.c` | Wi-Fi hooks (`esp_netif`), shared with the ETH backend |
+| `inc/net_config.h` | all example configuration |
 
-The registered NetBIOS name and the name-service UDP port are defined in `examples/netbios/main/netbios.c`:
-
-```cpp
-#define NETBIOS_BOARD_NAME     "W55RP20"             /*Define the NetBIOS name*/
-#define NETBIOS_PORT           137                   /*The default port for the NetBIOS name service*/
-```
-
-The device answers NetBIOS name queries for the name `W55RP20`. Change `NETBIOS_BOARD_NAME` if you want the board to respond to a different hostname.
+The ioLibrary socket API (`socket(sn, Sn_MR_UDP, …)` plus the `getSn_SR()` state
+machine the original example used) is not used: it drives the chip's socket
+registers directly, so `--wrap` has nothing to intercept and one source could not
+serve both backends.
 
 ## Step 4: Build
 
@@ -118,11 +144,11 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-If flashing succeeds, the assigned IP appears and the NetBIOS socket opens on UDP port 137.
+If flashing succeeds, the assigned IP appears and the responder binds UDP port 137.
 
 ```
-ip: 192.168.11.2
-3:Opened, UDP loopback, port [137]
+I (xxx) netbios: [eth] waiting for link...
+I (xxx) netbios: [eth] NetBIOS responder for "WIZNET" on UDP port 137
 ```
 
 ![][link-run_socket_open]
@@ -130,23 +156,16 @@ ip: 192.168.11.2
 On a Windows PC connected to the same network, resolve the device by its NetBIOS name. Open a Command Prompt and run:
 
 ```bash
-ping W55RP20
+ping WIZNET
 ```
 
 The name resolves to the device IP `192.168.11.2` and replies are returned, confirming the NetBIOS responder works.
 ![][link-run_ping]
 
-When a name query arrives, the serial monitor logs the requester, the decoded name, and the response that was sent:
+When a name query arrives, the serial monitor logs the name that was asked for and the address that was answered with:
 
 ```
-rem_ip_addr=192.168.11.100:137
-netbios name query question
-name is W55RP20
-
-
-!! name is correct !!
-
-send response
+I (xxx) netbios: [eth] "WIZNET" -> 192.168.11.2
 ```
 
 ![][link-run_serial]
@@ -157,12 +176,13 @@ Alternatively, query the NetBIOS name table for the device IP directly:
 nbtstat -A 192.168.11.2
 ```
 
-The device's registered name `W55RP20` is listed in the returned name table.
+The device's registered name `WIZNET` is listed in the returned name table.
 ![][link-run_nbtstat]
 
 ## Appendix
 
-- **NetBIOS name:** The board responds only to the exact name in `NETBIOS_BOARD_NAME` (`W55RP20`). NetBIOS names are case-insensitive and limited to 16 characters (`NETBIOS_NAME_LEN`).
+- **NetBIOS name:** The board responds only to the name in `NETBIOS_NAME` (`WIZNET`), and to `WIFI_NETBIOS_NAME` on the Wi-Fi STA when one is configured. NetBIOS names are case-insensitive and limited to 15 characters.
+- **Wi-Fi is optional:** with `WIFI_SSID` empty the example runs Ethernet-only and the Wi-Fi responder is never started.
 - **Same subnet required:** NetBIOS name service uses UDP broadcast on port 137, so the PC and the device must be on the same local subnet (`192.168.11.x` here). Name resolution does not cross routers.
 - **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
