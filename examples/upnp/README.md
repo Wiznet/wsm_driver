@@ -137,7 +137,7 @@ UPnP 규칙               프로토콜   외부 포트   내부 IP          내�
 002 esp_wiz_toe_tcp_8001   TCP        8001     192.168.11.7      8000
 ```
 
-Two differences from the Ethernet run are worth expecting. The first M-SEARCH succeeds — the `errno 5` below is a WIZnet-chip behaviour and Wi-Fi goes through LwIP instead. And the DHCP lease can take anywhere from two seconds to three minutes to arrive; five runs on the same AP measured 2.5 s, 29 s, 82 s, 86 s and 181 s. Ethernet is never affected. `examples/udp_multicast` describes the suspected cause.
+Two differences from the Ethernet run are worth expecting. The first M-SEARCH succeeds — the `errno 5` below is a WIZnet-chip behaviour and Wi-Fi goes through LwIP instead. And the DHCP lease can take anywhere from two seconds to three minutes to arrive; five runs on the same AP measured 2.5 s, 29 s, 82 s, 86 s and 181 s. Ethernet is never affected. It is Wi-Fi power save meeting an access point that buffers broadcasts poorly — `esp_wifi_set_ps(WIFI_PS_NONE)` after `wifi_net_init()` brought all five boots to about 2.2 s. `examples/udp_multicast` has the measurements and why the workaround is not applied by default.
 
 ### Differences from the original example
 

@@ -213,7 +213,7 @@ I (181337) wifi: got IP 192.168.11.7
 I (181424) mcast_rx: [wifi] listening to 224.0.0.5:30001
 ```
 
-That timestamp is not a typo — see [DHCP can take minutes with both interfaces up](#dhcp-can-take-minutes-with-both-interfaces-up) below. The Ethernet receiver is unaffected and starts within a second.
+That timestamp is not a typo — see [DHCP can take minutes on some access points](#dhcp-can-take-minutes-on-some-access-points) below. The Ethernet receiver is unaffected and starts within a second.
 
 ![][link-run_socket_open]
 
@@ -245,13 +245,29 @@ The Ethernet line comes off the W6300's hardware group filter, the Wi-Fi line of
 
 To check that the hardware filter really is filtering, send to a *different* group (say `224.0.0.9`) on the same port — the device should stay silent.
 
-### DHCP can take minutes with both interfaces up
+### DHCP can take minutes on some access points
 
-With Wi-Fi configured, the station associates in well under a second but the DHCP lease can take anywhere from two seconds to three minutes. It always arrives eventually, and Ethernet is never affected. The same delay shows up in the other dual-interface examples, so it is not specific to multicast.
+With Wi-Fi configured, the station associates in well under a second but the DHCP lease can take anywhere from two seconds to three minutes. It always arrives eventually, and Ethernet is never affected. This is not specific to multicast — the other Wi-Fi examples behave the same way on the same AP.
 
-The likely cause is that both interfaces end up on one subnet. `wiznet_net_init()` registers an LwIP netif for the WIZnet chip carrying the static identity from `net_config.h` (192.168.11.2/24 by default), and if the AP bridges onto the same LAN the Wi-Fi station is offered an address in that same /24. LwIP's `ip4_route()` picks the first netif whose subnet matches the destination, so the DHCP client's unicast traffic to the server can leave through the Ethernet netif instead of the Wi-Fi one; the exchange then only completes on a retry that happens to work out.
+The cause is Wi-Fi power save meeting an access point that buffers broadcasts poorly. IDF defaults to `WIFI_PS_MIN_MODEM`, where the station only wakes for DTIM beacons, and a DHCP OFFER is a broadcast: the AP has to hold it for sleeping stations and release it at the next DTIM. One AP here (DTIM 3, 102.4 ms beacons) frequently did not, and the lease arrived only when a retry happened to line up. Measured over five boots each, with association and the block-ack completing inside a second either way:
 
-That explanation has not been confirmed yet. If it holds, putting the two interfaces on different subnets should clear it — change `NET_IP_ADDR` in `net_config.h` to something outside the AP's range, e.g. `{192, 168, 20, 2}`.
+| | DHCP lease arrives at |
+|---|---|
+| `WIFI_PS_MIN_MODEM` (default) | 2.5 s, 29 s, 82 s, 86 s, 181 s |
+| `WIFI_PS_NONE` | 2.36 s, 2.35 s, 2.16 s, 2.14 s, 2.20 s |
+
+If you hit it, turn power save off after `wifi_net_init()`:
+
+```cpp
+#include "esp_wifi.h"
+
+wifi_net_init(WIFI_SSID, WIFI_PASS);
+esp_wifi_set_ps(WIFI_PS_NONE);
+```
+
+It is left in the example rather than the component on purpose: whether it is needed depends on the access point, most do not need it, and the radio costs real power in a product. A static Wi-Fi address avoids the problem entirely.
+
+Two explanations that were tested and ruled out. It is **not** the two interfaces sharing a subnet — moving the Ethernet netif to 192.168.20.0/24 changed nothing (90.8 s and 29.3 s on the first two boots). And it is **not** antenna or signal: RSSI measured -9 to -28 dBm throughout, unicast traffic was never affected, broadcasts go out at the lowest basic rate and are more robust than unicast anyway, and disabling power save fixed it with the antenna untouched.
 
 ### If nothing arrives: check which adapter Windows sends multicast on
 

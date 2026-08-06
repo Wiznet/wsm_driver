@@ -122,31 +122,39 @@ config ESP_WIZ_TOE_SOCKET_WRAP
 # -------------------- W6300 (QSPI: D0..D3 = MOSI/MISO/IO2/IO3) --------------
 if ESP_WIZ_TOE_CHIP_W6300
 
+# Wiring below matches the WSM-W63E board (ESP32-S3 + W6300). These are NOT the
+# FSPI IOMUX pins (GPIO 9-14), so SPI runs through the GPIO matrix; keep the
+# clock conservative. Board nets, from the WSM-W63E schematic:
+#   W6300_SPI_CLK -> GPIO42 (MTMS)   W6300_SPI_D0 -> GPIO34
+#   W6300_SPI_nCS -> GPIO41 (MTDI)   W6300_SPI_D1 -> GPIO35
+#   W6300_nINT    -> GPIO33          W6300_SPI_D2 -> GPIO36
+#   W6300_nRST    -> GPIO21          W6300_SPI_D3 -> GPIO37
+
 config ESP_WIZ_TOE_PIN_MOSI         # D0
     int
-    default 11
+    default 34
 
 config ESP_WIZ_TOE_PIN_MISO         # D1
     int
-    default 13
+    default 35
 
 config ESP_WIZ_TOE_PIN_IO2          # D2 (Quad only)
     int
     depends on ESP_WIZ_TOE_QSPI_QUAD
-    default 14
+    default 36
 
 config ESP_WIZ_TOE_PIN_IO3          # D3 (Quad only)
     int
     depends on ESP_WIZ_TOE_QSPI_QUAD
-    default 9
+    default 37
 
 config ESP_WIZ_TOE_PIN_SCLK
     int
-    default 12
+    default 42
 
 config ESP_WIZ_TOE_PIN_CS
     int
-    default 10
+    default 41
 
 config ESP_WIZ_TOE_PIN_RST
     int
@@ -154,7 +162,7 @@ config ESP_WIZ_TOE_PIN_RST
 
 config ESP_WIZ_TOE_PIN_INT
     int
-    default 8
+    default 33
 
 config ESP_WIZ_TOE_SPI_HOST
     int
@@ -162,7 +170,7 @@ config ESP_WIZ_TOE_SPI_HOST
 
 config ESP_WIZ_TOE_SPI_CLOCK_HZ
     int
-    default 33000000
+    default 20000000
 
 endif # W6300
 
