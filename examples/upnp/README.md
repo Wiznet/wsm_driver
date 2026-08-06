@@ -118,11 +118,33 @@ The seam is coarser than one function per socket call. Each step in the original
 
 Fill in `WIFI_SSID` / `WIFI_PASS` and set `UPNP_OVER_WIFI` to 1. Like the tftp example this runs one interface at a time: `upnp_core.c` keeps the discovered IGD in globals, so two concurrent sessions would share it.
 
-On Wi-Fi the callback address advertised to the router is read off the netif after DHCP rather than taken from `NET_IP_ADDR_STR`.
+On Wi-Fi the callback address advertised to the router is read off the netif after DHCP rather than taken from `NET_IP_ADDR_STR`, and the mapping follows it — that is what the empty `UPNP_MAP_INT_IP` is for. Pinning it to the Ethernet address would open the port onto an interface the session is not using.
+
+```
+I (82843) wifi: got IP 192.168.11.7
+I (82905) upnp: [wifi] sending M-SEARCH (1/5)
+I (82910) upnp_tx: SSDP reply from 192.168.11.1 (404 bytes)
+I (82911) upnp: [wifi] IGD found at 192.168.11.1:64690
+I (82952) upnp: [wifi] subscribed to eventing
+I (82955) upnp: [wifi] waiting 10s for eventing on port 5002
+I (93018) upnp: [wifi] mapped TCP 8002 -> 192.168.11.7:8000 ("esp_wiz_toe")
+```
+
+The router lists it against the Wi-Fi lease, not the static Ethernet address:
+
+```
+UPnP 규칙               프로토콜   외부 포트   내부 IP          내부 포트
+002 esp_wiz_toe_tcp_8001   TCP        8001     192.168.11.7      8000
+```
+
+Two differences from the Ethernet run are worth expecting. The first M-SEARCH succeeds — the `errno 5` below is a WIZnet-chip behaviour and Wi-Fi goes through LwIP instead. And the DHCP lease can take anywhere from two seconds to three minutes to arrive; five runs on the same AP measured 2.5 s, 29 s, 82 s, 86 s and 181 s. Ethernet is never affected. `examples/udp_multicast` describes the suspected cause.
 
 ### Differences from the original example
 
 - **The serial menu is gone.** `hyperterminal.c` waited on keystrokes to pick each action, which cannot be exercised without someone at the keyboard. The sequence it drove — discover, describe, subscribe, add, delete — now runs on its own from `net_config.h`. The LED, network-setting and loopback menu entries went with it; loopback has its own example.
+- **Requests ask the router to close.** The original sent `Connection: Keep-Alive`, which cost it nothing: it polled the chip's receive register and never waited on the peer. A BSD read loop has to know where the response ends, and a router honouring keep-alive holds the connection open, so every exchange ran to the receive timeout — and one that answered a little slowly was reported as failed *after the router had already applied it*. `Connection: close` ends the read with the response; the measured gap between the request and the log line went from over four seconds to 63 ms.
+- **Eventing notifications are always acknowledged.** The callback handler only replied `200 OK` when it had managed to read a body. An unacknowledged NOTIFY is retried, and at least one router stops serving control actions while it retries — which surfaced as `AddPortMapping` timing out seconds later. The reply is now unconditional.
+- **A timeout is not reported as a failure.** If no answer arrives, the request still reached the router and may have been applied, so the log says that rather than claiming the action failed.
 - **Timeouts work.** Every receive loop was written as `endTime = my_time + 3; while (recv(...) <= 0 && my_time < endTime);`, where `my_time` is only advanced by `data_process_count_handle()` — which nothing calls, here or upstream. `my_time` stays 0, the guard never trips, and a router that does not answer hangs the loop forever instead of timing out after three seconds. The same dead counter is in the ioLibrary TFTP client, so it is worth reporting upstream.
 - **Message building no longer touches the chip.** `MakeSubscribe()` called `getSIPR()` to read the local address out of the WIZnet registers. It is a parameter now, and `upnp_xml.c` has no hardware dependency.
 - **Parsed fields are bounded.** The parsers copied element bodies into fixed buffers using lengths taken from the document, so a long enough reply ran past the end of them. Everything here arrives from the router, so the lengths are checked.
@@ -229,7 +251,14 @@ A positive value is the router's own UPnP error code, returned verbatim:
 | 718 | that external port is already mapped to a different host |
 | 725 | the router only accepts permanent leases |
 
-718 usually means a previous run left its mapping behind. Delete it from the router's admin page, or run once with `UPNP_DELETE_AFTER_ADD` at 1.
+718 usually means a previous run left its mapping behind — the lease duration this example asks for is 0, meaning permanent, so the router keeps it until something removes it.
+
+The most common way to hit it is to run once on Ethernet with `UPNP_DELETE_AFTER_ADD` at 0 and then switch to Wi-Fi: the external port is still held for the Ethernet address, and the Wi-Fi run asks for the same port against its DHCP lease. Clearing it:
+
+- Run once on the interface that owns the mapping, with `UPNP_DELETE_AFTER_ADD` at 1. Same internal address means no conflict on the add, and the delete at the end removes the entry. Doing this from the *other* interface does not work — the router will not let one host delete another's mapping.
+- Or delete the rule in the router's admin page.
+
+`upnp_delete_port()` on its own would also do it, but the example does not expose a delete-only mode.
 
 ### `subscribe failed`
 

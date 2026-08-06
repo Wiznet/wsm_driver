@@ -67,9 +67,15 @@ static void listen_for_events(const char *name, uint32_t seconds)
             continue;                   /* nothing yet */
         }
 
+        /* Answer first, parse after. A NOTIFY that goes unacknowledged is
+         * retried, and at least one router (ipTIME) stops serving control
+         * actions while it is retrying — which showed up as AddPortMapping
+         * timing out several seconds later. The reply costs nothing even when
+         * the body was empty or unrecognised, so it is not conditional on
+         * having read one. */
         int n = upnp_transport_recv(fd, buf, EVENT_BUF_SIZE, 1000);
+        upnp_transport_send(fd, HTTP_OK, strlen(HTTP_OK));
         if (n > 0) {
-            upnp_transport_send(fd, HTTP_OK, strlen(HTTP_OK));
             upnp_parse_eventing(buf);
         }
         upnp_transport_close(fd);
@@ -122,17 +128,41 @@ static void upnp_client_task(void *arg)
         }
     }
 
-    /* Step 4 -- the actual point of the example. */
-    ret = upnp_add_port(UPNP_MAP_PROTOCOL, UPNP_MAP_EXT_PORT, UPNP_MAP_INT_IP,
+    /* Step 4 -- the actual point of the example.
+     *
+     * An empty UPNP_MAP_INT_IP means "this interface", which is the useful
+     * default: forwarding to the Ethernet address while the session runs over
+     * Wi-Fi would open a port onto the wrong interface. */
+    const char *internal_ip = UPNP_MAP_INT_IP[0] ? UPNP_MAP_INT_IP : c->local_ip();
+
+    ret = upnp_add_port(UPNP_MAP_PROTOCOL, UPNP_MAP_EXT_PORT, internal_ip,
                         UPNP_MAP_INT_PORT, UPNP_MAP_DESCRIPTION);
     if (ret == UPNP_OK) {
         ESP_LOGI(TAG, "[%s] mapped %s %d -> %s:%d (\"%s\")", c->name,
-                 UPNP_MAP_PROTOCOL, UPNP_MAP_EXT_PORT, UPNP_MAP_INT_IP,
+                 UPNP_MAP_PROTOCOL, UPNP_MAP_EXT_PORT, internal_ip,
                  UPNP_MAP_INT_PORT, UPNP_MAP_DESCRIPTION);
+    } else if (ret == UPNP_ERR_TIMEOUT) {
+        /* Not the same as a refusal. The request reached the router and it may
+         * well have applied it -- an ipTIME did exactly that while its response
+         * went unread -- so say what is actually known instead of calling it a
+         * failure and leaving a mapping nobody expects. */
+        ESP_LOGW(TAG, "[%s] no answer to AddPortMapping — the mapping may still "
+                      "have been created; check the router's admin page",
+                 c->name);
+        goto done;
     } else {
-        /* A positive value is the router's own UPnP error code -- 718 is a
-         * conflicting entry, 725 a router that only accepts permanent leases. */
+        /* A positive value is the router's own UPnP error code. */
         ESP_LOGE(TAG, "[%s] AddPortMapping failed (%d)", c->name, ret);
+        if (ret == 718) {
+            /* Worth spelling out: the usual cause is a mapping this example
+             * left behind on an earlier run with UPNP_DELETE_AFTER_ADD at 0,
+             * pointing at the other interface. Deleting it here is not an
+             * option -- 718 means the entry belongs to a different host, and
+             * removing someone else's mapping is not ours to do. */
+            ESP_LOGE(TAG, "[%s] external port %d is already mapped to another "
+                          "host — remove it in the router's admin page",
+                     c->name, UPNP_MAP_EXT_PORT);
+        }
         goto done;
     }
 

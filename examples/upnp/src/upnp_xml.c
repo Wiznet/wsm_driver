@@ -84,6 +84,15 @@ static void append_uint(char *dest, size_t size, unsigned value)
     append(dest, size, num);
 }
 
+/*
+ * The original asked for Connection: Keep-Alive, which suited code that polled
+ * the chip's receive register and never waited on the peer. A BSD read loop has
+ * to know when the response ends, and a router honouring keep-alive holds the
+ * connection open, so every exchange stalled until the receive timeout fired --
+ * and one that answered slowly was reported as failed even though it had
+ * applied the change. Asking it to close means the read ends with the response.
+ */
+
 /* "Host: 192.168.0.1:3121" -- every request carries the same pair. */
 static void append_host(char *dest, size_t size,
                         const char *igd_ip, const char *igd_port)
@@ -104,7 +113,7 @@ void upnp_xml_get_header(char *dest, size_t size, const char *desc_location,
     append(dest, size, "Accept: text/xml, application/xml\r\n");
     append(dest, size, "User-Agent: Mozilla/4.0 (compatible; UPnP/1.0; Windows NT/5.1)\r\n");
     append_host(dest, size, igd_ip, igd_port);
-    append(dest, size, "\r\nConnection: Keep-Alive\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n");
+    append(dest, size, "\r\nConnection: close\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n");
 }
 
 void upnp_xml_post_header(char *dest, size_t size, int content_length,
@@ -123,7 +132,7 @@ void upnp_xml_post_header(char *dest, size_t size, int content_length,
     append_host(dest, size, igd_ip, igd_port);
     append(dest, size, "\r\nContent-Length: ");
     append_uint(dest, size, (unsigned)content_length);
-    append(dest, size, "\r\nConnection: Keep-Alive\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n");
+    append(dest, size, "\r\nConnection: close\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n");
 }
 
 void upnp_xml_subscribe(char *dest, size_t size, const char *event_sub_url,

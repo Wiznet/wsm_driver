@@ -36,10 +36,13 @@
  * IGD in globals, so two concurrent sessions would share it. */
 #define UPNP_OVER_WIFI        0
 
-/* ---- port mapping the example asks the router for ---- */
+/* ---- port mapping the example asks the router for ----
+ * Leave UPNP_MAP_INT_IP empty to map to whichever interface is running the
+ * session. Pinning it to NET_IP_ADDR_STR would point a Wi-Fi run at the
+ * Ethernet address, which is not where the traffic would arrive. */
 #define UPNP_MAP_PROTOCOL     "TCP"
 #define UPNP_MAP_EXT_PORT     8000
-#define UPNP_MAP_INT_IP       NET_IP_ADDR_STR
+#define UPNP_MAP_INT_IP       ""
 #define UPNP_MAP_INT_PORT     8000
 #define UPNP_MAP_DESCRIPTION  "esp_wiz_toe"
 
