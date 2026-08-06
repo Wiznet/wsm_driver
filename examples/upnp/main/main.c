@@ -1,161 +1,104 @@
-/**
- * UPnP example — ported from WIZnet-PICO-C examples/upnp.
+/*
+ * SPDX-FileCopyrightText: 2010-2022 Espressif Systems (Shanghai) CO LTD
  *
- * Discovers an IGD (Internet Gateway Device, e.g. a home router) via SSDP,
- * then drives the serial menu (hyperterminal.c) to add/delete port mappings
- * over UPnP. UPnP.c / MakeXML.c / hyperterminal.c are carried with the
- * example, same as in the original.
+ * SPDX-License-Identifier: CC0-1.0
+ */
+
+/*
+ * UPnP IGD client on the WIZnet TOE (W5500 / W6300), ported from
+ * WIZnet-PICO-C examples/upnp.
+ *
+ * app_main only orchestrates: bring the interface up, start the session, and
+ * return. The session lives in the backend-neutral upnp_client.c, which takes a
+ * socket vtable -- here net_eth_ops, the plain lwIP BSD entry points that the
+ * esp_wiz_toe component redirects to the WIZnet hardware sockets at link time
+ * via -Wl,--wrap (see wiztoe_wrap.c).
+ *
+ * The protocol implementation is ioLibrary's, carried in the example rather
+ * than used from third_party, so its network calls could be swapped for BSD
+ * ones without forking the submodule. It reaches the network only through
+ * upnp_transport.h.
+ *
+ * Unlike the multicast example this one does not start a second session on
+ * Wi-Fi at the same time: upnp_core.c keeps the discovered IGD in globals, so
+ * two concurrent sessions would share it. Set WIFI_SSID and UPNP_OVER_WIFI to
+ * run over Wi-Fi instead of Ethernet.
+ *
+ * Config conventions follow esp_wiz_toe:
+ *   - SPI / pins  -> component Kconfig, applied by the TOE backend.
+ *   - network id  -> the wiz_NetInfo below (byte arrays from net_config.h),
+ *                    applied by wiznet_net_init() -> wizchip_setnetinfo().
+ *   - mapping     -> net_config.h.
  *
  * Works with W5500 or W6300 — select the chip in menuconfig:
  *   Component config -> WIZnet TOE Component -> WIZnet chip
  */
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
+#include "sdkconfig.h"
+#include "esp_netif.h"
+#include "wizchip_conf.h"       /* wiz_NetInfo, NETINFO_STATIC */
 
-#include "esp_task_wdt.h"
-#include "esp_wiz_toe.h"
-#include "esp_wiz_toe/Ethernet/socket.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "wizchip_conf.h"
-#include "UPnP.h"
-#include "hyperterminal.h"
+#include "net_backend.h"
+#include "wifi_backend.h"
+#include "net_sock_ops.h"
+#include "net_config.h"
+#include "upnp_client.h"
 
-/* Buffer */
-#define ETHERNET_BUF_MAX_SIZE (1024 * 2)
-
-/* Socket */
-#define SOCKET_UPNP 0
-
-/* Port */
-#define PORT_TCP 8000
-#define PORT_UDP 5000
-
-/* Network */
+/* Network identity — esp_wiz_toe style (wiz_NetInfo). Applied to the WIZnet
+ * chip's hardware TCP/IP stack by wiznet_net_init() -> wizchip_setnetinfo(). */
 static const wiz_NetInfo g_net_info = {
-    .mac = {0x00, 0x08, 0xDC, 0x12, 0x34, 0x56}, // MAC address
-    .ip = {192, 168, 11, 2},                     // IP address
-    .sn = {255, 255, 255, 0},                    // Subnet Mask
-    .gw = {192, 168, 11, 1},                     // Gateway
-    .dns = {8, 8, 8, 8},                         // DNS server
+    .mac = NET_MAC_ADDR,
+    .ip  = NET_IP_ADDR,
+    .sn  = NET_SUBNET_MASK,
+    .gw  = NET_GATEWAY,
+    .dns = NET_DNS_ADDR,
 #if _WIZCHIP_ > W5500
     .ipmode = NETINFO_STATIC_ALL,
 #endif
     .dhcp = NETINFO_STATIC,
 };
 
-/* Socket buffer sizes — same split as the original example */
-static uint8_t g_tx_size[_WIZCHIP_SOCK_NUM_] = {4, 4, 2, 1, 1, 1, 1, 2};
-static uint8_t g_rx_size[_WIZCHIP_SOCK_NUM_] = {4, 4, 2, 1, 1, 1, 1, 2};
+/* An empty SSID means "no AP configured" — run Ethernet-only rather than
+ * spinning on a connect that can never succeed. A plain runtime test rather than
+ * an #if: the preprocessor cannot inspect a string literal, and the compiler
+ * folds this away anyway. */
+#define WIFI_CONFIGURED  (WIFI_SSID[0] != '\0')
 
-/* UPNP */
-static uint8_t g_upnp_buf[ETHERNET_BUF_MAX_SIZE];
-
-static esp_wiz_toe_spi_config_t g_spi_cfg;
-
-/* User LED stand-in: the original drives the Pico onboard LED */
-static void setUserLEDStatus(uint8_t val)
+/* The IGD is told where to send eventing notifications, so the session needs
+ * this interface's address as text. On Ethernet it is the static identity
+ * above; on Wi-Fi it is a DHCP lease, so it is read off the netif once the link
+ * is up. Resolving it here rather than in upnp_client.c keeps that file free of
+ * esp_netif and thus reusable on either backend. */
+static const char *eth_local_ip(void)
 {
-    printf("[USER LED] %s\n", val ? "ON" : "OFF");
+    return NET_IP_ADDR_STR;
 }
 
-/* WIZnet chip bring-up through the esp_wiz_toe port layer */
-static void wizchip_port_initialize(void)
+#if UPNP_OVER_WIFI
+static const char *wifi_local_ip(void)
 {
-    memset(&g_spi_cfg, 0, sizeof(g_spi_cfg));
-    g_spi_cfg.host_id = (spi_host_device_t)CONFIG_ESP_WIZ_TOE_SPI_HOST;
-    g_spi_cfg.clock_hz = CONFIG_ESP_WIZ_TOE_SPI_CLOCK_HZ;
-    g_spi_cfg.pin_miso = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_MISO;
-    g_spi_cfg.pin_mosi = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_MOSI;
-    g_spi_cfg.pin_sclk = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_SCLK;
-    g_spi_cfg.pin_cs = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_CS;
-    g_spi_cfg.pin_int = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_INT;
-    g_spi_cfg.pin_rst = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_RST;
-#ifdef CONFIG_ESP_WIZ_TOE_PIN_IO2
-    g_spi_cfg.pin_io2 = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_IO2;
-#else
-    g_spi_cfg.pin_io2 = GPIO_NUM_NC;
-#endif
-#ifdef CONFIG_ESP_WIZ_TOE_PIN_IO3
-    g_spi_cfg.pin_io3 = (gpio_num_t)CONFIG_ESP_WIZ_TOE_PIN_IO3;
-#else
-    g_spi_cfg.pin_io3 = GPIO_NUM_NC;
-#endif
-    g_spi_cfg.lock_timeout_ms = 5000;
+    static char ip_str[16] = "0.0.0.0";
 
-    ESP_ERROR_CHECK(esp_wiz_toe_spi_init(&g_spi_cfg));
-    ESP_ERROR_CHECK(esp_wiz_toe_spi_register_iolib_callbacks());
-    ESP_ERROR_CHECK(esp_wiz_toe_spi_reset());
-    ESP_ERROR_CHECK(esp_wiz_toe_spi_wizchip_check());
-
-    if (wizchip_init(g_tx_size, g_rx_size) != 0) {
-        printf("wizchip_init failed\n");
-        abort();
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t info;
+    if (netif != NULL && esp_netif_get_ip_info(netif, &info) == ESP_OK) {
+        esp_ip4addr_ntoa(&info.ip, ip_str, sizeof(ip_str));
     }
-
-    wizchip_setnetinfo((wiz_NetInfo *)&g_net_info);
-
-    printf("ip: %d.%d.%d.%d\n", g_net_info.ip[0], g_net_info.ip[1], g_net_info.ip[2], g_net_info.ip[3]);
-#if _WIZCHIP_ > W5500
-    {
-        uint8_t physr;
-        uint32_t waited = 0;
-        do {
-            physr = getPHYSR();
-            if (physr & PHYSR_LNK) break;
-            vTaskDelay(pdMS_TO_TICKS(100));
-            waited += 100;
-        } while (waited < 3000);
-        if (!(physr & PHYSR_LNK)) {
-            printf("PHY link down after 3 s — check cable\n");
-        }
-    }
-#endif
+    return ip_str;
 }
-
-static void upnp_task(void *arg)
-{
-    (void)arg;
-
-    printf("wiznet chip upnp example.\r\n");
-
-    UserLED_Control_Init(setUserLEDStatus);
-
-    wizchip_port_initialize();
-
-    do {
-        printf("Send SSDP.. \r\n");
-        vTaskDelay(pdMS_TO_TICKS(100));
-    } while (SSDPProcess(SOCKET_UPNP) != 0); // SSDP Search discovery
-
-    if (GetDescriptionProcess(SOCKET_UPNP) == 0) { // GET IGD description
-        printf("GetDescription Success!!\r\n");
-    } else {
-        printf("GetDescription Fail!!\r\n");
-    }
-
-    if (SetEventing(SOCKET_UPNP) == 0) { // Subscribes IGD event messages
-        printf("SetEventing Success!!\r\n");
-    } else {
-        printf("SetEventing Fail!!\r\n");
-    }
-
-    Main_Menu(SOCKET_UPNP, SOCKET_UPNP + 1, SOCKET_UPNP + 2, g_upnp_buf, PORT_TCP, PORT_UDP); // Main menu
-
-    /* Infinite loop */
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
+#endif
 
 void app_main(void)
 {
-    // Sockets are opened in blocking mode; disable Task WDT to avoid resets
-    // during long waits and manual network testing.
-    esp_task_wdt_delete(NULL);
-    esp_task_wdt_deinit();
+    /* Ethernet (WIZnet chip) first: it initializes esp_netif + the default event
+     * loop that Wi-Fi then reuses, and applies g_net_info to the chip. */
+    wiznet_net_init(&g_net_info);
+    if (WIFI_CONFIGURED) {
+        wifi_net_init(WIFI_SSID, WIFI_PASS);
+    }
 
-    xTaskCreate(upnp_task, "upnp_task", 8192, NULL, 5, NULL);
+#if UPNP_OVER_WIFI
+    upnp_client_start("wifi", &net_wifi_ops, wifi_net_is_up, wifi_local_ip);
+#else
+    upnp_client_start("eth", &net_eth_ops, wiznet_net_is_up, eth_local_ip);
+#endif
 }
