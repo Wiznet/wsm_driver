@@ -152,32 +152,40 @@ On Linux/macOS:
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-The session runs to completion on its own. A successful run looks like this:
+The session runs to completion on its own. A full run against an ipTIME router, with `UPNP_DELETE_AFTER_ADD` set to 0 so the mapping survives:
 
 ```
-I (xxx) wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
-I (xxx) upnp: [eth] sending M-SEARCH (1/5)
-I (xxx) upnp_tx: SSDP reply from 192.168.11.1 (330 bytes)
-I (xxx) upnp: [eth] IGD found at 192.168.11.1:5000
-I (xxx) upnp: [eth] controlURL   /ctl/IPConn
-I (xxx) upnp: [eth] eventSubURL  /evt/IPConn
-I (xxx) upnp: [eth] subscribed to eventing
-I (xxx) upnp: [eth] waiting 10s for eventing on port 5002
-Receive Eventing(ExternalIPAddress): 203.0.113.7
-I (xxx) upnp: [eth] mapped TCP 8000 -> 192.168.11.2:8000 ("esp_wiz_toe")
-I (xxx) upnp: [eth] removed the mapping again
-I (xxx) upnp: [eth] session finished
+I (437)   wiztoe_net: TOE up: 192.168.11.2 (WIZnet hardware TCP/IP)
+I (437)   upnp: [eth] sending M-SEARCH (1/5)
+E (2050)  upnp_tx: M-SEARCH to 239.255.255.250:1900 failed: errno 5
+I (2051)  upnp: [eth] sending M-SEARCH (2/5)
+I (2056)  upnp_tx: SSDP reply from 192.168.11.1 (404 bytes)
+I (2058)  upnp: [eth] IGD found at 192.168.11.1:64690
+I (2071)  upnp: [eth] controlURL   /ctl/IPConn
+I (2071)  upnp: [eth] eventSubURL  /evt/IPConn
+I (2078)  upnp: [eth] subscribed to eventing
+I (2079)  upnp: [eth] waiting 10s for eventing on port 5002
+I (12107) upnp: [eth] mapped TCP 8000 -> 192.168.11.2:8000 ("esp_wiz_toe")
+I (12107) upnp: [eth] mapping left in place — check the router's admin page
+I (12109) upnp: [eth] session finished
 ```
 
-The log above is what the code prints, not a capture from a run — this example has not been tested against a live router yet.
+The failed first M-SEARCH is expected — see [`M-SEARCH ... failed: errno 5`](#m-search--failed-errno-5). `sending M-SEARCH` repeats up to five times, so a lost or dropped first datagram costs a few milliseconds rather than the run.
 
-`sending M-SEARCH` repeats up to five times; a single lost datagram is common and only the fifth failure gives up.
+Nothing printed between `waiting 10s` and the mapping: this router accepts the SUBSCRIBE and then never calls back. That is common and does not affect port mapping.
 
 ![][link-run_discovery]
 
 ### Confirm the mapping
 
-Set `UPNP_DELETE_AFTER_ADD` to 0 and rebuild, then open your router's admin page and look at the **UPnP** or **Port Forwarding** list. A rule for external port `8000` -> `192.168.11.2:8000` with description `esp_wiz_toe` confirms the device created the mapping over UPnP.
+Set `UPNP_DELETE_AFTER_ADD` to 0 and rebuild, then open your router's admin page and look at the **UPnP** or **Port Forwarding** list. On an ipTIME router that is *NAT/라우터 관리 -> 포트포워드 설정*, where UPnP-created rules are listed under **UPnP 규칙**, separately from the manually entered **사용자 규칙**:
+
+```
+UPnP 규칙 (1)          프로토콜   외부 포트   내부 IP          내부 포트
+001 esp_wiz_toe_tcp_8000   TCP        8000     192.168.11.2      8000
+```
+
+The router derived that name from `UPNP_MAP_DESCRIPTION` by appending the protocol and port; some routers show the description verbatim instead.
 
 ![][link-run_router]
 
@@ -194,7 +202,20 @@ The five M-SEARCH probes all went unanswered. In order of likelihood:
 - **UPnP is off on the router.** Most consumer routers ship with it enabled, but many ISP-supplied ones do not. Look for "UPnP" or "UPnP IGD" in the admin page and turn it on.
 - **The device IP is not on the router's LAN.** `NET_IP_ADDR` has to be a free host address in the router's subnet, and `NET_GATEWAY` has to be the router.
 - **The router is not an IGD.** A switch or an access point in bridge mode has nothing to map; the search has to reach the device that owns the WAN connection.
-- **The chip could not send to the multicast group.** `sendto()` to `239.255.255.250` needs a destination MAC, and ioLibrary's `sendto()` has no multicast handling — it hands the address to the chip, which tries to resolve it by ARP. If a capture shows ARP requests for `239.255.255.250` and no outgoing M-SEARCH, that is this. The fix belongs in `upnp_transport_ssdp()`, which would set the group before opening the socket the way `examples/udp_multicast` does; `upnp_core.c` would not change.
+
+If all five attempts fail with `errno 5` rather than simply going unanswered, read the next entry.
+
+### `M-SEARCH ... failed: errno 5`
+
+```
+E (2050) upnp_tx: M-SEARCH to 239.255.255.250:1900 failed: errno 5
+```
+
+Expected on the first attempt of a run, and harmless: the retry immediately after it succeeds.
+
+`sendto()` to `239.255.255.250` needs a destination MAC, and ioLibrary's `sendto()` has no multicast handling — it hands the address to the chip, which tries to resolve it by ARP and gives up after about 1.6 s (that is the gap between the two log lines above). By the second attempt the send goes out and the router answers within milliseconds.
+
+`DISCOVER_ATTEMPTS` in `src/upnp_client.c` exists for this. If a future chip or firmware makes every attempt fail this way, the fix belongs in `upnp_transport_ssdp()` — it would set the group before opening the socket, the way `examples/udp_multicast` does — and `upnp_core.c` would not change.
 
 ### `AddPortMapping failed (718)`
 
