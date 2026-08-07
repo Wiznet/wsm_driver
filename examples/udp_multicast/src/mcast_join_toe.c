@@ -16,7 +16,7 @@
  *
  *     fd == hardware socket number + LWIP_SOCKET_OFFSET
  *
- * That is an internal rule of esp_wiz_toe, not a published contract. If it ever
+ * That is an internal rule of wsm_driver, not a published contract. If it ever
  * changes this file keeps compiling and starts poking the wrong socket, so the
  * mapping is checked at runtime before anything is written -- see below.
  *
@@ -36,9 +36,9 @@
 
 static const char *TAG = "mcast_join";
 
-#if CONFIG_ESP_WIZ_TOE_SOCKET_WRAP
+#if CONFIG_WSM_DRIVER_SOCKET_WRAP
 
-#include "esp_wiz_toe/Ethernet/socket.h"    /* socket(), close(), setSn_*  */
+#include "wsm_driver/Ethernet/socket.h"    /* socket(), close(), setSn_*  */
 #include "wizchip_conf.h"                   /* _WIZCHIP_SOCK_NUM_          */
 
 /* Dotted quad to four bytes. Deliberately not inet_addr(): that would mean
@@ -102,7 +102,7 @@ int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port)
     return 0;
 }
 
-#else /* !CONFIG_ESP_WIZ_TOE_SOCKET_WRAP */
+#else /* !CONFIG_WSM_DRIVER_SOCKET_WRAP */
 
 /*
  * With the esp_eth backend the wrap is off, so `fd` is a genuine LwIP socket
@@ -114,9 +114,9 @@ int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port)
 int mcast_join_toe(const void *ops, int fd, const char *group, uint16_t port)
 {
     (void)ops; (void)fd; (void)group; (void)port;
-    ESP_LOGE(TAG, "mcast_join_toe() called with ESP_WIZ_TOE_SOCKET_WRAP off — "
+    ESP_LOGE(TAG, "mcast_join_toe() called with WSM_DRIVER_SOCKET_WRAP off — "
                   "use mcast_join_bsd() for the esp_eth backend");
     return -1;
 }
 
-#endif /* CONFIG_ESP_WIZ_TOE_SOCKET_WRAP */
+#endif /* CONFIG_WSM_DRIVER_SOCKET_WRAP */

@@ -31,13 +31,13 @@ idf.py menuconfig
 Select **Component config**.
 ![][link-config_main]
 
-Select **WIZnet TOE Component** under Component config.
+Select **WIZnet WSM Driver** under Component config.
 ![][link-config_component]
 
 Choose the WIZnet chip, and check the per-socket buffer size. SPI host, clock, and pins follow the selected chip automatically. In this example, SPI2 of the ESP32-S3 is used at 33 MHz.
 ![][link-config_wiz_toe]
 
-> This example ships with **W6300** selected by default (`sdkconfig.defaults`). Switch to W5500 under `Component config -> WIZnet TOE Component -> WIZnet chip` if needed.
+> This example ships with **W6300** selected by default (`sdkconfig.defaults`). Switch to W5500 under `Component config -> WIZnet WSM Driver -> WIZnet chip` if needed.
 
 **W5500 wiring (standard SPI)**
 
@@ -196,7 +196,7 @@ transfer is visibly a transfer, not just a success code.
 << TFTP_OACK :
 >> TFTP ACK : Block Number(0)
 << TFTP_DATA : opcode(3), block_num(1)
-I (6458) tftp: first block: "WIZnet esp_wiz_toe TFTP test file  Transferred over th" ...
+I (6458) tftp: first block: "WIZnet wsm_driver TFTP test file  Transferred over th" ...
 >> TFTP ACK : Block Number(1)
 << TFTP_DATA : opcode(3), block_num(2)
 >> TFTP ACK : Block Number(2)
@@ -292,17 +292,17 @@ Check in order:
 
 - **TFTP server IP / file name:** `TFTP_SERVER_IP` must match the **Server interfaces** address configured in Tftpd64. `TFTP_SERVER_FILE_NAME` must exist in Tftpd64's **Base Directory**.
 - **Retransmission timer:** An `esp_timer` fires `tftp_timeout_handler()` once per second to drive TFTP retransmission, so a dropped packet is retried automatically.
-- **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet TOE Component -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
+- **W6300 QSPI mode:** Quad mode (4-bit) requires the extra D2/D3 lines wired and selected in `Component config -> WIZnet WSM Driver -> W6300 QSPI mode`. Single mode uses the same 4-wire wiring as W5500.
 
 <!-- Link -->
 [link-tera_term]: https://osdn.net/projects/ttssh2/releases/
 [link-tftpd64]: https://pjo2.github.io/tftpd64/
 
-[link-hardware]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/hardware.png
-[link-config_main]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/config_main.png
-[link-config_component]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/config_component.png
-[link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/config_wiz_toe.png
+[link-hardware]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/hardware.png
+[link-config_main]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/config_main.png
+[link-config_component]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/config_component.png
+[link-config_wiz_toe]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/config_wiz_toe.png
 
-[link-build_log]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/build_log.png
-[link-run_tftpd64]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/run_tftpd64.png
-[link-run_tftp_success]: https://raw.githubusercontent.com/Wiznet/esp_wiz_toe/main/static/image/tftp/run_tftp_success.png
+[link-build_log]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/build_log.png
+[link-run_tftpd64]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/run_tftpd64.png
+[link-run_tftp_success]: https://raw.githubusercontent.com/Wiznet/wsm_driver/main/static/image/tftp/run_tftp_success.png

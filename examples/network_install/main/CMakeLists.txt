@@ -6,7 +6,7 @@ idf_component_register(
         "."
         "../inc"
     REQUIRES
-        esp_wiz_toe
+        wsm_driver
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
