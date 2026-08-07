@@ -1,6 +1,6 @@
 name: esp_wiz_toe
 version: "1.0.0"
-description: "ESP-IDF SPI port layer for using WIZnet W5500 with the official ioLibrary"
+description: "ESP-IDF SPI/QSPI port layer for using WIZnet W5500/W6300 with the official ioLibrary"
 license: "MIT"
 repository: "https://github.com/Wiznet/esp_wiz_toe"
 url: "https://github.com/Wiznet/esp_wiz_toe"
@@ -8,17 +8,34 @@ tags:
   - ethernet
   - wiznet
   - w5500
+  - w6300
   - spi
+  - qspi
   - toe
 targets:
   - esp32s3
 dependencies:
   idf:
-    version: ">=5.4.0,<5.5.0"
+    version: ">=5.4.0"
 
 examples:
+  - path: examples/dhcp_dns
+  - path: examples/http
+  - path: examples/loopback
+  - path: examples/mqtt
+  - path: examples/netbios
+  - path: examples/network_install
+  - path: examples/pppoe
+  - path: examples/sntp
   - path: examples/tcp_client
+  - path: examples/tcp_client_over_ssl
   - path: examples/tcp_server
+  - path: examples/tcp_server_multi_socket
+  - path: examples/tftp
+  - path: examples/udp
+  - path: examples/udp_multicast
+  - path: examples/upnp
+  - path: examples/w6300_loopback
 
 files:
   use_gitignore: true
@@ -27,11 +44,9 @@ files:
     - ".git/**"
     - "TODO.md"
     - ".componentignore"
+    - ".vscode/**"
+    - "esp_wiz_toe.code-workspace"
     - "examples/**/sdkconfig.old"
     - "third_party/ioLibrary_Driver/.git"
     - "third_party/ioLibrary_Driver/**/*.chm"
-    - "third_party/ioLibrary_Driver/Internet/MQTT/**/*"
     - "third_party/ioLibrary_Driver/Internet/SNMP/**/*"
-    - "third_party/ioLibrary_Driver/Internet/SNTP/**/*"
-    - "third_party/ioLibrary_Driver/Internet/TFTP/**/*"
-    - "third_party/ioLibrary_Driver/Internet/httpServer/**/*"

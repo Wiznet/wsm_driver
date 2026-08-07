@@ -1,0 +1,18 @@
+menu "MQTT Example Configuration"
+
+choice EXAMPLE_MQTT_MODE
+    prompt "MQTT mode"
+    default EXAMPLE_MQTT_PUBLISH_SUBSCRIBE
+
+config EXAMPLE_MQTT_PUBLISH
+    bool "Publish only"
+
+config EXAMPLE_MQTT_SUBSCRIBE
+    bool "Subscribe only"
+
+config EXAMPLE_MQTT_PUBLISH_SUBSCRIBE
+    bool "Publish and subscribe"
+
+endchoice
+
+endmenu

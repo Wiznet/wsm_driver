@@ -1,5 +1,13 @@
 menu "WIZnet TOE Component"
 
+#
+# Only three things are user-selectable here: the chip, the W6300 QSPI mode,
+# and the per-socket buffer sizes. All SPI wiring (pins / host / clock) is
+# derived from the chip and hidden from menuconfig — see the per-chip blocks
+# at the bottom. Symbol names are the same for both chips (the port/example
+# code reads CONFIG_ESP_WIZ_TOE_PIN_*); only the values differ.
+#
+
 config ESP_WIZ_TOE_ENABLED
     bool "Enable esp_wiz_toe"
     default y
@@ -7,6 +15,9 @@ config ESP_WIZ_TOE_ENABLED
 
 if ESP_WIZ_TOE_ENABLED
 
+# =============================================================================
+# Chip selection
+# =============================================================================
 choice ESP_WIZ_TOE_CHIP
     prompt "WIZnet chip"
     default ESP_WIZ_TOE_CHIP_W5500
@@ -14,42 +25,60 @@ choice ESP_WIZ_TOE_CHIP
 config ESP_WIZ_TOE_CHIP_W5500
     bool "W5500"
 
+config ESP_WIZ_TOE_CHIP_W6300
+    bool "W6300"
+
 endchoice
 
-config ESP_WIZ_TOE_SPI_HOST
-    int "SPI host (2=SPI2, 3=SPI3)"
-    range 2 3
-    default 2
+# =============================================================================
+# Network backend selection
+# =============================================================================
+# TOE and ETH each define wiznet_net_init()/wiznet_net_is_up(), so they are
+# mutually exclusive at link time — pick exactly one here.
+choice ESP_WIZ_TOE_BACKEND
+    prompt "Network backend"
+    default ESP_WIZ_TOE_BACKEND_TOE
+    help
+        TOE = WIZnet hardware TCP/IP via the ioLibrary (W5500 or W6300).
+        ETH = the chip as a SPI Ethernet MAC (esp_eth MACRAW) + software LwIP.
 
-config ESP_WIZ_TOE_SPI_CLOCK_HZ
-    int "SPI clock (Hz)"
-    range 1000000 80000000
-    default 33000000
+config ESP_WIZ_TOE_BACKEND_TOE
+    bool "TOE (hardware TCP/IP)"
 
-config ESP_WIZ_TOE_PIN_MISO
-    int "GPIO: MISO"
-    default 13
+config ESP_WIZ_TOE_BACKEND_ETH
+    bool "esp_eth MACRAW + software LwIP"
+    help
+        Runs the chip as a dumb Ethernet MAC (MACRAW on hardware socket 0) and
+        lets the ESP32-S3's software LwIP own the TCP/IP stack, so the full BSD
+        socket API (select/poll, non-blocking, TLS, IPv6, unlimited sockets) is
+        available instead of the chip's 8 hardware sockets.
 
-config ESP_WIZ_TOE_PIN_MOSI
-    int "GPIO: MOSI"
-    default 11
+        Each chip has its own esp_eth MAC/PHY pair, selected automatically:
+          W5500 -> esp_eth_mac_w5500.c / esp_eth_phy_w5500.c (SPI VDM framing)
+          W6300 -> esp_eth_mac_w6300.c / esp_eth_phy_w6300.c (QSPI framing,
+                   single or quad per the W6300 QSPI mode option below)
 
-config ESP_WIZ_TOE_PIN_SCLK
-    int "GPIO: SCLK"
-    default 12
+endchoice
 
-config ESP_WIZ_TOE_PIN_CS
-    int "GPIO: CS"
-    default 10
+# =============================================================================
+# W6300 QSPI mode
+# =============================================================================
+choice ESP_WIZ_TOE_QSPI_MODE
+    prompt "W6300 QSPI mode"
+    depends on ESP_WIZ_TOE_CHIP_W6300
+    default ESP_WIZ_TOE_QSPI_QUAD
 
-config ESP_WIZ_TOE_PIN_RST
-    int "GPIO: RESET"
-    default 9
+config ESP_WIZ_TOE_QSPI_SINGLE
+    bool "Single (1-bit, standard SPI wiring)"
 
-config ESP_WIZ_TOE_PIN_INT
-    int "GPIO: INT"
-    default 14
+config ESP_WIZ_TOE_QSPI_QUAD
+    bool "Quad (4-bit, requires IO2/IO3 wiring)"
 
+endchoice
+
+# =============================================================================
+# Per-socket buffer sizes (tunable, chip-independent)
+# =============================================================================
 config ESP_WIZ_TOE_RX_BUF_KB
     int "Per-socket RX buffer size (KB)"
     range 1 16
@@ -60,6 +89,120 @@ config ESP_WIZ_TOE_TX_BUF_KB
     range 1 16
     default 2
 
-endif
+# =============================================================================
+# BSD socket integration (--wrap): route lwIP sockets to the TOE hardware sockets
+# =============================================================================
+config ESP_WIZ_TOE_SOCKET_WRAP
+    bool 
+    depends on ESP_WIZ_TOE_BACKEND_TOE
+    default y
+    help
+        When enabled, lwIP's BSD socket entry points (socket/bind/listen/
+        accept/connect/send/recv/close/...) are redirected at link time to the
+        WIZnet chip's hardware TCP/IP sockets. Standard socket code then runs
+        over the TOE with no source changes.
+
+        This builds the extra TOE port sources (wiznet_toe.c, wiztoe_wrap.c),
+        renames ioLibrary's close() to wiz_close() so it no longer hijacks POSIX
+        close(), and adds the -Wl,--wrap=lwip_* linker flags.
+
+        Follows the backend choice by default: TOE -> enabled (BSD sockets run
+        on the chip), ETH -> not applicable (plain lwIP over esp_eth).
+
+        Turn this OFF for apps that call the ioLibrary socket API directly
+        (socket(sn, Sn_MR_TCP, ...) / close(sn)), as the non-loopback examples
+        do — the close() rename above would otherwise send their close(sn) to
+        newlib's POSIX close().
+
+# =============================================================================
+# SPI wiring — derived per chip (no prompt -> hidden, follows chip choice).
+# Switching W5500/W6300 updates these automatically. To rewire, edit a value.
+# =============================================================================
+
+# -------------------- W6300 (QSPI: D0..D3 = MOSI/MISO/IO2/IO3) --------------
+if ESP_WIZ_TOE_CHIP_W6300
+
+config ESP_WIZ_TOE_PIN_MOSI         # D0
+    int
+    default 11
+
+config ESP_WIZ_TOE_PIN_MISO         # D1
+    int
+    default 13
+
+config ESP_WIZ_TOE_PIN_IO2          # D2 (Quad only)
+    int
+    depends on ESP_WIZ_TOE_QSPI_QUAD
+    default 14
+
+config ESP_WIZ_TOE_PIN_IO3          # D3 (Quad only)
+    int
+    depends on ESP_WIZ_TOE_QSPI_QUAD
+    default 9
+
+config ESP_WIZ_TOE_PIN_SCLK
+    int
+    default 12
+
+config ESP_WIZ_TOE_PIN_CS
+    int
+    default 10
+
+config ESP_WIZ_TOE_PIN_RST
+    int
+    default 21
+
+config ESP_WIZ_TOE_PIN_INT
+    int
+    default 8
+
+config ESP_WIZ_TOE_SPI_HOST
+    int
+    default 2
+
+config ESP_WIZ_TOE_SPI_CLOCK_HZ
+    int
+    default 33000000
+
+endif # W6300
+
+# -------------------- W5500 (standard SPI: MISO/MOSI) -----------------------
+if ESP_WIZ_TOE_CHIP_W5500
+
+config ESP_WIZ_TOE_PIN_MISO
+    int
+    default 13
+
+config ESP_WIZ_TOE_PIN_MOSI
+    int
+    default 11
+
+config ESP_WIZ_TOE_PIN_SCLK
+    int
+    default 12
+
+config ESP_WIZ_TOE_PIN_CS
+    int
+    default 10
+
+config ESP_WIZ_TOE_PIN_RST
+    int
+    default 9
+
+config ESP_WIZ_TOE_PIN_INT
+    int
+    default 14
+
+config ESP_WIZ_TOE_SPI_HOST
+    int
+    default 2
+
+config ESP_WIZ_TOE_SPI_CLOCK_HZ
+    int
+    default 33000000
+
+endif # W5500
+
+endif # ESP_WIZ_TOE_ENABLED
 
 endmenu

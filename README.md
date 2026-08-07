@@ -20,9 +20,52 @@ Application code uses ioLibrary APIs directly (`wizchip_init`, `socket`, `connec
 
 ## Supported WIZnet TOE chips
 
-- W5500
+- W5500 (standard SPI)
+- W6300 (QSPI: single 1-bit or quad 4-bit mode)
 
 Other WIZnet chips may be added later.
+
+### W6300 notes
+
+W6300 uses QSPI framing (opcode + 16-bit address + dummy clocks + data) instead
+of the W5500 SPI byte/burst interface. The port layer drives it with the
+ESP32-S3 SPI master in half-duplex mode.
+
+- **Single mode** (default): uses the same 4-wire wiring as W5500
+  (MOSI=IO0, MISO=IO1, SCLK, CS).
+- **Quad mode**: requires two extra data lines (IO2/IO3) wired to the chip and
+  selected via `Component config -> WIZnet TOE Component -> W6300 QSPI mode`.
+
+Select the chip in menuconfig: `Component config -> WIZnet TOE Component -> WIZnet chip -> W6300`.
+
+## Network backend
+
+`Component config -> WIZnet TOE Component -> Network backend` picks who owns the
+TCP/IP stack. Both options work with either chip.
+
+- **TOE (hardware TCP/IP)** — the chip runs the stack (ioLibrary). Apps either
+  call the ioLibrary socket API directly, or enable
+  `Route BSD sockets to the WIZnet TOE hardware sockets (--wrap)` to drive the
+  chip's 8 hardware sockets through standard BSD socket calls. IPv4 TCP/UDP only;
+  no `select`/`poll`.
+- **esp_eth MACRAW + software LwIP** — the chip is a plain Ethernet MAC
+  (MACRAW on hardware socket 0) and the ESP32-S3's LwIP owns the stack, so the
+  full socket API is available (`select`/`poll`, non-blocking, TLS, IPv6, no
+  8-socket limit) at the cost of moving every packet across the SPI/QSPI bus.
+
+Each chip has its own esp_eth MAC/PHY pair, selected automatically by the chip
+choice:
+
+| Chip  | MAC / PHY                                | Transport                     |
+|-------|------------------------------------------|-------------------------------|
+| W5500 | `esp_eth_mac_w5500.c` / `esp_eth_phy_w5500.c` | full-duplex SPI, VDM frame |
+| W6300 | `esp_eth_mac_w6300.c` / `esp_eth_phy_w6300.c` | half-duplex QSPI, single or quad |
+
+The W6300 pair is specific to this component. Beyond the different frame format
+it also has to unlock the chip's `CHPLCKR`/`NETLCKR`/`PHYLCKR` register groups
+after every reset (the W6300 boots with them locked, so `SYCR0`, `SHAR` and
+`PHYCR0/1` are otherwise unwritable) and it uses `PHYSR` + `PHYCR0/1` instead of
+the W5500's single `PHYCFGR`, whose speed/duplex bits have the opposite polarity.
 
 ## Public API
 
@@ -34,6 +77,21 @@ Header: `include/esp_wiz_toe.h`
 - `esp_wiz_toe_spi_reset`
 - `esp_wiz_toe_spi_wizchip_check`
 - `esp_wiz_toe_spi_link_is_up`
+
+## Quick start (clone & build)
+
+The repository root is a component; the buildable projects are the examples.
+
+```bash
+git clone --recursive https://github.com/Wiznet/esp_wiz_toe.git
+cd esp_wiz_toe
+idf.py -C examples/tcp_client build      # -C selects the project directory
+```
+
+For VSCode, open `esp_wiz_toe.code-workspace` (File -> Open Workspace from
+File). The workspace registers each example as a folder, so the ESP-IDF
+extension works as usual — run `ESP-IDF: Pick a Workspace Folder`, choose an
+example, then use the normal build/flash/monitor buttons.
 
 ## Usage flow
 
@@ -57,14 +115,43 @@ If that folder is missing, the component cannot provide ioLibrary callback bindi
 
 ## Examples
 
-Available examples:
+Available examples (ported from [WIZnet-PICO-C](https://github.com/WIZnet-ioNIC/WIZnet-PICO-C);
+each works with W5500 or W6300 — switch the chip in menuconfig — except
+`pppoe`, which is W5500-only):
 
-- `examples/tcp_client`
-- `examples/tcp_server`
+- `examples/loopback` — TCP server loopback (TCP client / UDP via defines)
+- `examples/tcp_client` — TCP loopback client
+- `examples/tcp_server` — TCP loopback server
+- `examples/tcp_server_multi_socket` — same port served on every hardware socket
+- `examples/udp` — UDP echo server or client (menuconfig choice)
+- `examples/udp_multicast` — UDP multicast receiver (224.0.0.5:30000)
+- `examples/dhcp_dns` — DHCP address lease + DNS lookup
+- `examples/sntp` — network time from time.google.com
+- `examples/tftp` — TFTP client file read
+- `examples/http` — HTTP web server on port 80
+- `examples/mqtt` — MQTT publish / subscribe / both (menuconfig choice)
+- `examples/netbios` — NetBIOS name service responder
+- `examples/network_install` — PHY link / cable bring-up check
+- `examples/pppoe` — PPPoE session establishment (**W5500 only**; the vendored
+  PPPoE driver uses W5500 registers absent on W6300)
+- `examples/upnp` — IGD discovery + port mapping via serial menu
+- `examples/tcp_client_over_ssl` — TLS client over the WIZnet socket using
+  mbedTLS (cert verification disabled for the demo)
+- `examples/w6300_loopback` — W6300 reference (chip pinned to W6300)
 
-Each example uses ioLibrary APIs directly after SPI port-layer initialization.
+Not ported from WIZnet-PICO-C: `can` (RP2040 PIO-specific) and `ftp` (FTP
+module not present in the ioLibrary submodule).
 
-SPI host/clock/pin defaults and per-socket RX/TX buffer size can be changed in menuconfig:
+Each example is an independent ESP-IDF project that uses ioLibrary APIs
+directly after SPI port-layer initialization. Build from the example folder:
+
+```bash
+cd examples/tcp_client
+idf.py build
+```
+
+Chip, SPI host/clock/pin defaults and per-socket RX/TX buffer size can be
+changed in menuconfig:
 
 - `Component config -> WIZnet TOE Component -> WIZnet chip -> W5500`
 - `Component config -> WIZnet TOE Component -> SPI host (2=SPI2, 3=SPI3)`
@@ -76,6 +163,7 @@ Example-specific endpoint values are kept in each example source for simplicity:
 
 - `examples/tcp_client/main/main.c` (`EXAMPLE_SERVER_IP`, `EXAMPLE_SERVER_PORT`)
 - `examples/tcp_server/main/main.c` (`EXAMPLE_LISTEN_PORT`)
+- `examples/w6300_loopback/main/main.c` (`EXAMPLE_TCP_LISTEN_PORT`, `EXAMPLE_UDP_LISTEN_PORT`)
 
 
 ## Using this component from ESP Component Registry
@@ -115,7 +203,7 @@ For example, you can refer to:
 
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_client/main/main.c`
 `managed_components/wiznet__esp_wiz_toe/examples/tcp_server/main/main.c`
-
+`managed_components/wiznet__esp_wiz_toe/examples/w6300_loopback/main/main.c`
 
 Then paste or adapt the code into your project source file, for example:
 

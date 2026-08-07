@@ -1,0 +1,25 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "../src/http_server.c"
+    INCLUDE_DIRS
+        "."
+        "../inc"
+    REQUIRES
+        esp_wiz_toe
+        esp_wifi
+        nvs_flash
+        esp_netif
+        esp_event
+        lwip
+)
+
+# NOTE: do NOT define ESP_WIZ_TOE_SOCKET_WRAP here. The esp_wiz_toe component
+# already defines it PUBLIC from CONFIG_ESP_WIZ_TOE_SOCKET_WRAP, so it arrives
+# via REQUIRES. Hardcoding it breaks the ETH backend, where the wrap is off.
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wall
+    -Wno-format          # int != int32_t as far as the compiler is concerned because gcc has int32_t as long int
+    -Wno-unused-function
+    )

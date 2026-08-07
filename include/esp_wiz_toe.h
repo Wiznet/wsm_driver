@@ -14,12 +14,14 @@ extern "C" {
 typedef struct {
     spi_host_device_t host_id;
     int clock_hz;
-    gpio_num_t pin_miso;
-    gpio_num_t pin_mosi;
+    gpio_num_t pin_miso;   /**< W6300 QSPI: IO1 */
+    gpio_num_t pin_mosi;   /**< W6300 QSPI: IO0 */
     gpio_num_t pin_sclk;
     gpio_num_t pin_cs;
     gpio_num_t pin_rst;
     gpio_num_t pin_int;
+    gpio_num_t pin_io2;    /**< W6300 quad mode only; ignored otherwise */
+    gpio_num_t pin_io3;    /**< W6300 quad mode only; ignored otherwise */
     uint32_t lock_timeout_ms;
 } esp_wiz_toe_spi_config_t;
 
