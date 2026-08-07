@@ -1,8 +1,10 @@
 idf_component_register(
     SRCS
         "main.c"
+        "../src/link_check.c"
     INCLUDE_DIRS
         "."
+        "../inc"
     REQUIRES
         esp_wiz_toe
 )
